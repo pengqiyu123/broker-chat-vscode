@@ -1,0 +1,13 @@
+.vscode/**
+src/**
+scripts/**
+node_modules/**
+artifacts/**
+.codex-plugin/**
+**/*.map
+tsconfig.json
+.gitignore
+package-lock.json
+AGENTS.md
+CLAUDE.md
+PLAN.md

@@ -1,0 +1,128 @@
+{
+  "name": "broker-chat-vscode",
+  "displayName": "Broker Chat",
+  "description": "A local VS Code broker panel for Codex and Claude Code.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pengqiyu123/broker-chat-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:broker.openChat",
+    "onCommand:broker.newSession",
+    "onCommand:broker.stopActiveResponse",
+    "onView:brokerChatSidebar"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "brokerChatSidebarContainer",
+          "title": "Broker Chat",
+          "icon": "media/broker-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "brokerChatSidebarContainer": [
+        {
+          "id": "brokerChatSidebar",
+          "type": "webview",
+          "name": "Broker Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "broker.openChat",
+        "title": "Open Broker Chat"
+      },
+      {
+        "command": "broker.newSession",
+        "title": "New Broker Session"
+      },
+      {
+        "command": "broker.stopActiveResponse",
+        "title": "Stop Active Response"
+      }
+    ],
+    "configuration": {
+      "title": "Broker Chat",
+      "properties": {
+        "broker.codexPath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Executable path for Codex CLI."
+        },
+        "broker.claudePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Executable path for Claude Code CLI."
+        },
+        "broker.defaultReturnMode": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "full"
+          ],
+          "default": "compact",
+          "description": "Default return payload mode used during auto debate."
+        },
+        "broker.defaultAutoDebateRounds": {
+          "type": "number",
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "default": 1,
+          "description": "Default number of auto debate rounds."
+        },
+        "broker.claudePermissionMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "plan",
+            "acceptEdits",
+            "auto",
+            "bypassPermissions",
+            "dontAsk"
+          ],
+          "default": "default",
+          "description": "Permission mode forwarded to Claude headless runs."
+        },
+        "broker.claudeAllowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Optional allowed tools forwarded to Claude as --allowedTools."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package:vsix": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-vsix.ps1",
+    "install:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local.ps1",
+    "uninstall:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\uninstall-local.ps1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.2",
+    "@types/node": "^22.15.3",
+    "@types/vscode": "^1.98.0",
+    "typescript": "^5.8.3"
+  }
+}

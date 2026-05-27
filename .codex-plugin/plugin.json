@@ -1,0 +1,32 @@
+{
+  "name": "broker-chat-vscode",
+  "version": "0.0.1",
+  "description": "A local VS Code broker panel for Codex and Claude Code.",
+  "author": {
+    "name": "local"
+  },
+  "license": "MIT",
+  "keywords": [
+    "vscode",
+    "broker",
+    "codex",
+    "claude"
+  ],
+  "interface": {
+    "displayName": "Broker Chat",
+    "shortDescription": "Local VS Code broker panel for Codex and Claude Code.",
+    "longDescription": "Broker Chat monitors local Codex and Claude Code conversations from VS Code and can bridge selected replies between the official extensions.",
+    "developerName": "local",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Open Broker Chat setup guidance.",
+      "Review the local bridge behavior.",
+      "Package this VS Code extension."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
