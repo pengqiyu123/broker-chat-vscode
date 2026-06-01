@@ -21,7 +21,7 @@ if (-not (Test-Path $vscePath)) {
 Write-Host "Compiling extension..."
 Push-Location $projectRoot
 try {
-  npm run compile | Out-Host
+  npm run build:all | Out-Host
 
   Write-Host "Packaging VSIX..."
   & $vscePath package --allow-missing-repository --out $outputFile | Out-Host

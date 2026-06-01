@@ -23,7 +23,7 @@ $targetDir = Join-Path $extensionRoot $targetDirName
 Write-Host "Compiling extension..."
 Push-Location $projectRoot
 try {
-  npm run compile | Out-Host
+  npm run build:all | Out-Host
 } finally {
   Pop-Location
 }

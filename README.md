@@ -1,65 +1,90 @@
 # Broker Chat VS Code 扩展
 
-Broker Chat 是一个本地 VS Code 扩展，用来监控当前项目里的官方 Codex 与 Claude Code VS Code 对话，并在两边官方插件之间桥接转发模型回复。
+Broker Chat 是一个本地 VS Code 扩展，用来查看当前项目里的官方 Codex 与 Claude Code 对话，并把选中的回复转发到另一边官方面板。
 
-它不直接运行模型，也不保存自己的聊天历史。它读取本机官方 transcript 文件，展示当前工作区匹配到的最新会话，并可以把选中的模型回复转发到另一个官方扩展。
+它不运行模型，也不保存自己的聊天历史；它只读取你本机官方插件生成的 transcript 文件。
 
 ## 功能
 
-- 读取官方 Codex transcript：`~/.codex/sessions`。
-- 读取官方 Claude Code transcript：`~/.claude/sessions` 和 `~/.claude/projects`。
-- 按当前 VS Code 工作区 `cwd` 隔离会话，多个项目窗口不会互相串记录。
-- 顶部显示 3 个状态卡片：`监控状态`、`当前项目`、`桥接状态`。
-- 在 Windows 上通过剪贴板和键盘自动化桥接转发选中的回复。
-- “仅转发这条回答”会自动加来源前缀：`Codex说：` 或 `ClaudeCode说：`。
+- 监控当前 VS Code 工作区对应的 Codex / Claude Code 官方会话。
+- 按工作区 `cwd` 隔离会话，避免多个项目窗口串记录。
+- 在 Windows 上通过官方面板完成桥接发送。
+- 可选配 Claude Code MCP，让 Claude Code 用工具把文本发送到 Codex 或 Claude Code 面板。
 
-## 运行要求
+## 要求
 
 - VS Code `1.98.0` 或更新版本。
-- 桥接发送功能需要 Windows。
-- 已安装并登录官方 Codex VS Code 扩展。
-- 已安装并登录官方 Claude Code VS Code 扩展。
-- 需要先在同一个 VS Code 工作区里开启至少一个官方 Codex 或 Claude Code 对话。
+- 已安装并登录官方 Codex 与 Claude Code VS Code 扩展。
+- 桥接发送目前需要 Windows。
+- 需要先在同一个 VS Code 工作区里开启真实官方对话。
 
-监控功能依赖本机官方 transcript 文件。桥接发送功能还要求目标官方扩展面板能被 VS Code 聚焦。
+## 安装
 
-## 从 VSIX 安装
+从 VSIX 安装：
 
-1. 获取分享者提供的 `.vsix` 文件。
-2. 打开 VS Code。
-3. 打开 Extensions 扩展面板。
-4. 点击扩展面板右上角 `...` 菜单。
-5. 选择 `Install from VSIX...`。
-6. 选择 `.vsix` 文件。
-7. 完全关闭并重新打开 VS Code。
-8. 从活动栏打开 `Broker Chat`，或在命令面板运行 `Open Broker Chat`。
+1. 在 VS Code 扩展面板选择 `Install from VSIX...`。
+2. 选择分享得到的 `.vsix` 文件。
+3. 完全关闭并重新打开 VS Code。
+4. 打开活动栏里的 `Broker Chat`，或运行命令 `Open Broker Chat`。
 
-## 从源码开发
+从源码安装到本机 VS Code：
 
 ```powershell
 npm install
-npm run compile
-```
-
-启动开发调试：
-
-1. 用 VS Code 打开本目录。
-2. 按 `F5` 启动 Extension Development Host。
-3. 在新窗口里运行 `Open Broker Chat`。
-
-安装到当前普通 VS Code：
-
-```powershell
 npm run install:local
 ```
 
-打包可分享的 VSIX：
+打包新的 VSIX：
 
 ```powershell
 npm run package:vsix
 ```
 
-打包结果会生成到 `artifacts/` 目录。
+## 使用
+
+打开 `Broker Chat` 后，确认顶部显示的是当前项目。页面会展示当前项目匹配到的 Codex 与 Claude Code 官方会话。
+
+在合并时间线中，点击模型回复下方的操作：
+
+- `合并转发到 ...`：带上相邻用户问题和这条回复一起发送。
+- `仅转发这条回答`：只发送当前模型回复。
+
+## Claude Code MCP
+
+如果要让 Claude Code 通过工具触发转发，把 MCP server 加到 `~/.claude/settings.json`。
+
+把下面路径换成你的实际源码或安装目录：
+
+```json
+{
+  "mcpServers": {
+    "broker-chat": {
+      "command": "node",
+      "args": ["C:/path/to/broker-chat-vscode/dist/mcp/broker-mcp-server.js"],
+      "env": {
+        "BROKER_PORT": "14711"
+      }
+    }
+  }
+}
+```
+
+如果从 VSIX 安装，把 `args` 换成已安装扩展目录里的 `dist/mcp/broker-mcp-server.js`。
+
+配置后重启 Claude Code。使用时可以说：
+
+```text
+请阅读当前项目，并通过 Broker 发给 Codex。
+
+请总结本轮改动，并通过 Broker 转发这条最新回复给 Claude Code。
+```
+
+首次启动 Broker Chat 时会自动生成 `~/.broker-chat/mcp-token`；MCP server 会自动读取它。
+
+MCP 有两种用法：
+
+- 直接发送指定文本到 Codex 或 Claude Code。
+- 先让当前模型正常回答，再把 Broker 时间线里的最新官方回复按页面转发按钮的同款格式发送。
 
 ## 命令
 
@@ -67,30 +92,8 @@ npm run package:vsix
 - `New Broker Session`
 - `Stop Active Response`
 
-## 会话匹配规则
-
-Broker Chat 只展示 `cwd` 与当前 VS Code 工作区目录匹配的官方会话。
-
-- Codex：从 `~/.codex/sessions/**/*.jsonl` 读取 `session_meta.cwd`。
-- Claude Code：从 `~/.claude/sessions/*.json` 读取 `cwd`，再到 `~/.claude/projects` 里定位对应 transcript。
-- 如果当前项目没有匹配会话，Broker Chat 会显示空状态，不会回退到其他项目的最新会话。
-
-这个规则是刻意设计的：它能避免多个 VS Code 项目窗口之间混用聊天记录。
-
-## 快速验证
-
-1. 在 VS Code 中打开一个项目目录。
-2. 在这个工作区里启动一条真实 Codex 对话。
-3. 在这个工作区里启动一条真实 Claude Code 对话。
-4. 打开 Broker Chat。
-5. 确认顶部“当前项目”显示的是当前项目名。
-6. 确认 Codex 和 Claude 两栏展示的是当前项目的对话。
-7. 点击某条模型回复下方的 `仅转发这条回答`。
-8. 确认目标官方扩展收到的文本带有 `Codex说：` 或 `ClaudeCode说：` 前缀。
-
 ## 已知限制
 
-- 桥接发送目前只支持 Windows。
-- 如果同一个项目、同一个模型侧有多个官方会话，Broker Chat 会跟随最近更新的一条。
-- 本扩展依赖官方 Codex 与 Claude Code 扩展的本地 transcript 文件格式；如果官方格式变化，可能需要同步更新解析逻辑。
-- Broker Chat 不替代官方 Codex 或 Claude Code UI，它只是监控和桥接工具。
+- 桥接发送依赖 Windows、剪贴板、焦点和官方面板状态。
+- 如果同一个项目、同一个模型侧有多个会话，默认跟随最近更新的一条。
+- 官方 transcript 文件格式变化时，可能需要更新解析逻辑。

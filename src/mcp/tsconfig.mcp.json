@@ -3,26 +3,20 @@
     "module": "Node16",
     "target": "ES2022",
     "lib": [
-      "ES2022",
-      "DOM"
+      "ES2022"
     ],
-    "outDir": "dist",
-    "rootDir": "src",
+    "outDir": "../../dist/mcp",
+    "rootDir": ".",
     "strict": true,
-    "sourceMap": true,
     "esModuleInterop": true,
     "types": [
-      "node",
-      "vscode"
+      "node"
     ],
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node16",
     "skipLibCheck": true
   },
   "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "src/mcp/**/*.ts"
+    "broker-mcp-server.ts"
   ]
 }

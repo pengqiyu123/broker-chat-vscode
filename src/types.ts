@@ -105,7 +105,7 @@ export interface BridgeStatus {
   busy: boolean;
   target?: AgentKind;
   source?: AgentKind;
-  mode?: "merge-forward" | "forward-answer";
+  mode?: "merge-forward" | "forward-answer" | "direct-send";
   message?: string;
   error?: string;
   updatedAt?: number;
@@ -158,4 +158,5 @@ export interface BrokerConfig {
   defaultAutoDebateRounds: AutoDebateRounds;
   claudePermissionMode: string;
   claudeAllowedTools: string[];
+  mcpPort: number;
 }

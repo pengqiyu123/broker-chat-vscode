@@ -108,21 +108,32 @@
           },
           "default": [],
           "description": "Optional allowed tools forwarded to Claude as --allowedTools."
+        },
+        "broker.mcpPort": {
+          "type": "number",
+          "default": 14711,
+          "description": "Port for the Broker Chat MCP HTTP API on localhost."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test:bridge": "node scripts/test-bridge-prompt.js",
+    "build:mcp": "tsc -p src/mcp/tsconfig.mcp.json --noEmit && node scripts/build-mcp.js",
+    "build:all": "npm run compile && npm run build:mcp",
     "watch": "tsc -w -p ./",
     "package:vsix": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-vsix.ps1",
     "install:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local.ps1",
     "uninstall:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\uninstall-local.ps1"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.15.3",
     "@types/vscode": "^1.98.0",
-    "typescript": "^5.8.3"
+    "@vscode/vsce": "^3.6.2",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.8.3",
+    "zod": "^4.4.3"
   }
 }

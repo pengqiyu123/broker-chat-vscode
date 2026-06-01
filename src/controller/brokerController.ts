@@ -11,11 +11,23 @@ import {
   ReturnMode,
   UsageSummary
 } from "../types";
-import { createId, otherAgent } from "../utils";
+import { createId, normalizePath, otherAgent } from "../utils";
 import { ClaudeAdapter } from "../adapters/ClaudeAdapter";
 import { CodexAdapter } from "../adapters/codexAdapter";
 import { OfficialUiBridge } from "../automation/OfficialUiBridge";
 import { OfficialTranscriptMonitor } from "../monitor/OfficialTranscriptMonitor";
+import { buildMonitoredBridgePrompt, findLatestModelMessage, MonitoredBridgeMode } from "./bridgePrompt";
+
+interface BridgeActionResult {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  source?: AgentKind;
+  target?: AgentKind;
+  mode?: MonitoredBridgeMode;
+  sessionId?: string;
+  messageId?: string;
+}
 
 export class BrokerController implements vscode.Disposable {
   private readonly changeEmitter = new vscode.EventEmitter<BrokerSnapshot>();
@@ -89,82 +101,72 @@ export class BrokerController implements vscode.Disposable {
     sourceAgent: AgentKind,
     sessionId: string,
     messageId: string,
-    mode: "merge-forward" | "forward-answer",
+    mode: MonitoredBridgeMode,
     extraText = ""
-  ): Promise<void> {
+  ): Promise<BridgeActionResult> {
     if (this.bridgeState.busy) {
+      const error = "已有一条桥接发送正在进行，请稍后重试。";
       this.bridgeState = {
         ...this.bridgeState,
-        error: "已有一条桥接发送正在进行，请稍后重试。",
+        error,
         updatedAt: Date.now(),
-        busy: false
+        busy: this.bridgeState.busy
       };
       this.emit();
-      return;
+      return { ok: false, error, source: sourceAgent, mode };
     }
 
     const session = sourceAgent === "codex" ? this.monitorSnapshot.codex : this.monitorSnapshot.claude;
     if (!session || session.sessionId !== sessionId) {
+      const error = "监控数据已经刷新，请重试这条消息。";
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
         mode,
-        error: "监控数据已经刷新，请重试这条消息。",
+        error,
         updatedAt: Date.now()
       };
       this.emit();
-      return;
+      return { ok: false, error, source: sourceAgent, mode };
     }
 
     const messageIndex = session.messages.findIndex((entry) => entry.id === messageId);
     if (messageIndex === -1) {
+      const error = "未找到要桥接的消息。";
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
         mode,
-        error: "未找到要桥接的消息。",
+        error,
         updatedAt: Date.now()
       };
       this.emit();
-      return;
+      return { ok: false, error, source: sourceAgent, mode, sessionId };
     }
 
-    const message = session.messages[messageIndex];
-    if (!message || message.role !== sourceAgent) {
+    const promptResult = buildMonitoredBridgePrompt(sourceAgent, session.messages, messageIndex, mode, extraText);
+    if (!promptResult.ok) {
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
         mode,
-        error: "只有模型回复可以桥接发送。",
+        target: promptResult.target,
+        error: promptResult.error,
         updatedAt: Date.now()
       };
       this.emit();
-      return;
+      return {
+        ok: false,
+        error: promptResult.error,
+        source: sourceAgent,
+        target: promptResult.target,
+        mode,
+        sessionId,
+        messageId
+      };
     }
 
-    const target = otherAgent(sourceAgent);
-    const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
-    let prompt = `${sourceLabel}说：\n${message.text.trim()}`;
-
-    if (mode === "merge-forward") {
-      const relatedUser = this.findAdjacentMonitoredUserMessage(session.messages, messageIndex);
-      if (!relatedUser) {
-        this.bridgeState = {
-          busy: false,
-          source: sourceAgent,
-          target,
-          mode,
-          error: "这条回复前没有找到可合并的用户问题。",
-          updatedAt: Date.now()
-        };
-        this.emit();
-        return;
-      }
-
-      prompt = `User question:\n${relatedUser.text.trim()}\n\n${sourceLabel} answer:\n${message.text.trim()}`;
-    }
-
-    prompt = this.appendBridgeExtraText(prompt, extraText);
+    const target = promptResult.target;
 
     this.bridgeState = {
       busy: true,
@@ -177,7 +179,7 @@ export class BrokerController implements vscode.Disposable {
     this.emit();
 
     try {
-      const result = await this.uiBridge.sendToAgent(target, prompt);
+      const result = await this.uiBridge.sendToAgent(target, promptResult.prompt);
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
@@ -186,18 +188,98 @@ export class BrokerController implements vscode.Disposable {
         message: result,
         updatedAt: Date.now()
       };
+      this.emit();
+      return { ok: true, message: result, source: sourceAgent, target, mode, sessionId, messageId };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
         target,
         mode,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
         updatedAt: Date.now()
       };
+      this.emit();
+      return { ok: false, error: message, source: sourceAgent, target, mode, sessionId, messageId };
+    }
+  }
+
+  public async forwardLatestMonitoredReply(
+    sourceAgent: AgentKind,
+    mode: MonitoredBridgeMode,
+    workspaceCwd: string,
+    extraText = "",
+    afterMessageId?: string,
+    waitMs = 5000
+  ): Promise<BridgeActionResult> {
+    this.assertWorkspace(workspaceCwd);
+
+    const latest = await this.waitForLatestMonitoredReply(sourceAgent, afterMessageId, waitMs);
+    if (!latest.ok) {
+      this.bridgeState = {
+        busy: false,
+        source: sourceAgent,
+        mode,
+        error: latest.error,
+        updatedAt: Date.now()
+      };
+      this.emit();
+      return { ok: false, error: latest.error, source: sourceAgent, mode };
     }
 
+    return this.bridgeMonitoredMessage(
+      sourceAgent,
+      latest.session.sessionId,
+      latest.message.id,
+      mode,
+      extraText
+    );
+  }
+
+  public async sendToAgentViaBridge(target: AgentKind, text: string, workspaceCwd: string): Promise<string> {
+    this.assertWorkspace(workspaceCwd);
+
+    if (!text.trim()) {
+      throw new Error("Text is required.");
+    }
+
+    if (this.bridgeState.busy) {
+      throw new Error("已有一条桥接发送正在进行，请稍后重试。");
+    }
+
+    this.bridgeState = {
+      busy: true,
+      target,
+      mode: "direct-send",
+      message: `正在桥接到 ${target === "codex" ? "Codex" : "Claude"}...`,
+      updatedAt: Date.now()
+    };
     this.emit();
+
+    try {
+      const result = await this.uiBridge.sendToAgent(target, text);
+      this.bridgeState = {
+        busy: false,
+        target,
+        mode: "direct-send",
+        message: result,
+        updatedAt: Date.now()
+      };
+      this.emit();
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.bridgeState = {
+        busy: false,
+        target,
+        mode: "direct-send",
+        error: message,
+        updatedAt: Date.now()
+      };
+      this.emit();
+      throw new Error(message);
+    }
   }
 
   public setCurrentTarget(target: AgentKind): void {
@@ -348,23 +430,6 @@ export class BrokerController implements vscode.Disposable {
     this.changeEmitter.dispose();
     void this.adapters.codex.dispose();
     void this.adapters.claude.dispose();
-  }
-
-  private findAdjacentMonitoredUserMessage(messages: ChatMessage[], fromIndex: number): ChatMessage | undefined {
-    const candidate = messages[fromIndex - 1];
-    if (candidate?.role === "user" && candidate.text.trim()) {
-      return candidate;
-    }
-    return undefined;
-  }
-
-  private appendBridgeExtraText(prompt: string, extraText: string): string {
-    const trimmedExtraText = extraText.trim();
-    if (!trimmedExtraText) {
-      return prompt;
-    }
-
-    return `${prompt}\n\nAdditional user note:\n${trimmedExtraText}`;
   }
 
   private async forwardMerged(message: ChatMessage): Promise<void> {
@@ -584,6 +649,71 @@ export class BrokerController implements vscode.Disposable {
     return this.messages.find((entry) => entry.id === message.replyToUserMessageId);
   }
 
+  private assertWorkspace(workspaceCwd: string): void {
+    const requestedCwd = normalizePath(workspaceCwd);
+    const activeCwd = normalizePath(this.cwd);
+    if (!requestedCwd || requestedCwd !== activeCwd) {
+      throw new Error(`Workspace mismatch. Broker is attached to "${this.cwd}".`);
+    }
+  }
+
+  private async waitForLatestMonitoredReply(
+    sourceAgent: AgentKind,
+    afterMessageId: string | undefined,
+    waitMs: number
+  ): Promise<
+    | {
+        ok: true;
+        session: NonNullable<BrokerSnapshot["monitor"]["codex"]>;
+        message: ChatMessage;
+      }
+    | {
+        ok: false;
+        error: string;
+      }
+  > {
+    const boundedWaitMs = Math.min(Math.max(waitMs, 0), 30_000);
+    const deadline = Date.now() + boundedWaitMs;
+    const sourceLabel = sourceAgent === "codex" ? "Codex" : "Claude Code";
+
+    while (true) {
+      await this.refreshMonitor();
+      const session = sourceAgent === "codex" ? this.monitorSnapshot.codex : this.monitorSnapshot.claude;
+      const latest = session ? findLatestModelMessage(session.messages, sourceAgent) : undefined;
+
+      if (session && latest && (!afterMessageId || latest.message.id !== afterMessageId)) {
+        return {
+          ok: true,
+          session,
+          message: latest.message
+        };
+      }
+
+      if (Date.now() >= deadline) {
+        if (!session) {
+          return {
+            ok: false,
+            error: `当前项目暂无 ${sourceLabel} 官方会话。`
+          };
+        }
+
+        if (!latest) {
+          return {
+            ok: false,
+            error: `当前项目暂无 ${sourceLabel} 官方回复可转发。`
+          };
+        }
+
+        return {
+          ok: false,
+          error: `等待新的 ${sourceLabel} 回复超时；Broker 仍看到上一条回复。`
+        };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
   private pushSystemMessage(text: string): ChatMessage {
     return this.pushMessage({
       id: createId(),
@@ -611,7 +741,8 @@ export class BrokerController implements vscode.Disposable {
       defaultReturnMode: config.get<ReturnMode>("defaultReturnMode", "compact"),
       defaultAutoDebateRounds: config.get<AutoDebateRounds>("defaultAutoDebateRounds", 1),
       claudePermissionMode: config.get<string>("claudePermissionMode", "default"),
-      claudeAllowedTools: config.get<string[]>("claudeAllowedTools", [])
+      claudeAllowedTools: config.get<string[]>("claudeAllowedTools", []),
+      mcpPort: config.get<number>("mcpPort", 14711)
     };
   }
 }
