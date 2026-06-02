@@ -51,6 +51,9 @@ export class BrokerWebviewConnection implements vscode.Disposable {
           );
         }
         return;
+      case "show-logs":
+        await vscode.commands.executeCommand("broker.showLogs");
+        return;
       case "toggle-auto-forward":
         if (typeof message.autoForwardEnabled === "boolean") {
           await this.controller.setAutoForwardEnabled(message.autoForwardEnabled);
@@ -92,10 +95,12 @@ export class BrokerWebviewConnection implements vscode.Disposable {
           </div>
           <div class="toolbar">
             <button id="settingsButton" class="icon-button" title="设置" aria-expanded="false">⚙</button>
+            <button id="logsButton" class="ghost">日志</button>
             <button id="refreshButton" class="ghost">Refresh</button>
           </div>
         </div>
         <div id="statusBar" class="status-bar"></div>
+        <div id="statusDetail" class="status-detail"></div>
         <div id="settingsPanel" class="settings-panel" hidden>
           <label class="toggle-row">
             <span>自动转发</span>

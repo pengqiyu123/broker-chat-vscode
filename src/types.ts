@@ -108,6 +108,12 @@ export interface OfficialMonitorSnapshot {
   claudeError?: string;
 }
 
+export interface PreferredMonitorSession {
+  agent: AgentKind;
+  sessionId: string;
+  sourcePath?: string;
+}
+
 export interface BridgeStatus {
   busy: boolean;
   target?: AgentKind;
@@ -137,6 +143,7 @@ export interface WebviewInboundMessage {
     | "ready"
     | "refresh-monitor"
     | "bridge-send"
+    | "show-logs"
     | "toggle-auto-forward"
     | "save-auto-forward-keywords";
   sourceAgent?: AgentKind;

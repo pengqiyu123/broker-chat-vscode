@@ -3,7 +3,10 @@ src/**
 scripts/**
 node_modules/**
 artifacts/**
+distribute/**
 .codex-plugin/**
+Broker-Chat-*.zip
+scripts/create-release.*
 **/*.map
 tsconfig.json
 .gitignore

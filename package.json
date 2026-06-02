@@ -2,7 +2,7 @@
   "name": "broker-chat-vscode",
   "displayName": "Broker Chat",
   "description": "A local VS Code broker panel for Codex and Claude Code.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -20,6 +20,7 @@
     "onCommand:broker.openChat",
     "onCommand:broker.newSession",
     "onCommand:broker.stopActiveResponse",
+    "onCommand:broker.showLogs",
     "onView:brokerChatSidebar"
   ],
   "main": "./dist/extension.js",
@@ -54,6 +55,10 @@
       {
         "command": "broker.stopActiveResponse",
         "title": "Stop Active Response"
+      },
+      {
+        "command": "broker.showLogs",
+        "title": "Show Broker Chat Logs"
       }
     ],
     "configuration": {
@@ -159,6 +164,7 @@
     "compile": "tsc -p ./",
     "test:bridge": "node scripts/test-bridge-prompt.js",
     "test:auto-forward": "node scripts/test-auto-forward.js",
+    "test:powershell": "node scripts/test-powershell-scripts.js",
     "watch": "tsc -w -p ./",
     "package:vsix": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-vsix.ps1",
     "install:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local.ps1",

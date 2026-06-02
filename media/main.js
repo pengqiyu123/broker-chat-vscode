@@ -37,10 +37,12 @@
     ]
   };
   const elements = {
+    logsButton: document.getElementById("logsButton"),
     refreshButton: document.getElementById("refreshButton"),
     settingsButton: document.getElementById("settingsButton"),
     settingsPanel: document.getElementById("settingsPanel"),
     statusBar: document.getElementById("statusBar"),
+    statusDetail: document.getElementById("statusDetail"),
     autoForwardToggle: document.getElementById("autoForwardToggle"),
     codexKeywords: document.getElementById("codexKeywords"),
     claudeKeywords: document.getElementById("claudeKeywords"),
@@ -433,6 +435,7 @@
         autoForwardDetail
       )
     ].join("");
+    elements.statusDetail.innerHTML = escapeHtml(getVisibleStatusDetail(bridge, autoForward));
 
     elements.codexSession.innerHTML = renderSessionCard(monitor.codex, monitor.codexError, "Codex");
     elements.claudeSession.innerHTML = renderSessionCard(monitor.claude, monitor.claudeError, "Claude");
@@ -440,6 +443,22 @@
     elements.claudePreview.innerHTML = renderPreview(claudePreviewEntries);
     elements.mergedTimeline.innerHTML = renderMergedTimeline(mergedEntries);
     syncSettingsFields();
+  }
+
+  function getVisibleStatusDetail(bridge, autoForward) {
+    if (bridge.error) {
+      return `桥接失败：${bridge.error}`;
+    }
+    if (bridge.busy && bridge.message) {
+      return bridge.message;
+    }
+    if (autoForward.error) {
+      return `自动转发失败：${autoForward.error}`;
+    }
+    if (autoForward.message) {
+      return `自动转发：${autoForward.message}`;
+    }
+    return "状态：等待关键词或手动转发。";
   }
 
   window.addEventListener("message", (event) => {
@@ -464,6 +483,10 @@
 
   elements.refreshButton.addEventListener("click", () => {
     vscode.postMessage({ type: "refresh-monitor" });
+  });
+
+  elements.logsButton.addEventListener("click", () => {
+    vscode.postMessage({ type: "show-logs" });
   });
 
   elements.settingsButton.addEventListener("click", () => {

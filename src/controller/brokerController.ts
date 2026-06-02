@@ -20,6 +20,7 @@ import {
   DEFAULT_AUTO_FORWARD_KEYWORDS,
   normalizeAutoForwardKeywords
 } from "../automation/AutoForwardEngine";
+import { BrokerLogger } from "../automation/BrokerLogger";
 import { OfficialUiBridge } from "../automation/OfficialUiBridge";
 import { OfficialTranscriptMonitor } from "../monitor/OfficialTranscriptMonitor";
 import { buildBridgeAnswerPrompt, buildMonitoredBridgePrompt, MonitoredBridgeMode } from "./bridgePrompt";
@@ -41,7 +42,7 @@ export class BrokerController implements vscode.Disposable {
   private readonly adapters: Record<AgentKind, AgentAdapter>;
   private readonly transcriptMonitor: OfficialTranscriptMonitor;
   private readonly autoForwardEngine = new AutoForwardEngine();
-  private readonly uiBridge = new OfficialUiBridge();
+  private readonly uiBridge: OfficialUiBridge;
   private readonly pollTimer: NodeJS.Timeout;
   private monitorSnapshot = {
     enabled: true,
@@ -70,8 +71,12 @@ export class BrokerController implements vscode.Disposable {
   };
   private pendingResponseByMessageId = new Map<string, { target: AgentKind; requestText: string; plainTextOnly?: boolean }>();
 
-  public constructor(private readonly cwd: string) {
+  public constructor(
+    private readonly cwd: string,
+    private readonly logger?: BrokerLogger
+  ) {
     this.transcriptMonitor = new OfficialTranscriptMonitor(this.cwd);
+    this.uiBridge = new OfficialUiBridge(this.cwd, this.logger);
     this.adapters = {
       codex: new CodexAdapter(() => this.getConfig(), cwd),
       claude: new ClaudeAdapter(() => this.getConfig(), cwd)
@@ -111,7 +116,7 @@ export class BrokerController implements vscode.Disposable {
   }
 
   public async refreshMonitor(): Promise<void> {
-    this.monitorSnapshot = await this.transcriptMonitor.readSnapshot();
+    this.monitorSnapshot = await this.transcriptMonitor.readSnapshot(this.autoForwardEngine.getPendingSession());
     await this.evaluateAutoForward();
     this.emit();
   }
@@ -215,6 +220,9 @@ export class BrokerController implements vscode.Disposable {
       updatedAt: Date.now()
     };
     this.emit();
+    this.logger?.info(
+      `bridge action start source=${sourceAgent} target=${target} mode=${mode} session=${sessionId} message=${messageId} chars=${promptResult.prompt.length}`
+    );
 
     try {
       const result = await this.uiBridge.sendToAgent(target, promptResult.prompt);
@@ -227,6 +235,7 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
+      this.logger?.info(`bridge action success source=${sourceAgent} target=${target} mode=${mode} message=${messageId}`);
       return { ok: true, message: result, source: sourceAgent, target, mode, sessionId, messageId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -239,6 +248,7 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
+      this.logger?.error(`bridge action failed source=${sourceAgent} target=${target} mode=${mode} message=${messageId}: ${message}`);
       return { ok: false, error: message, source: sourceAgent, target, mode, sessionId, messageId };
     }
   }

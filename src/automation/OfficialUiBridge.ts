@@ -2,22 +2,39 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import * as vscode from "vscode";
 import { AgentKind } from "../types";
+import { BrokerLogger } from "./BrokerLogger";
+import { isForegroundWorkspaceWindow, WindowSnapshot } from "./windowFocusGuard";
 
 const execFileAsync = promisify(execFile);
 
 export class OfficialUiBridge {
+  public constructor(
+    private readonly workspaceCwd: string,
+    private readonly logger?: BrokerLogger
+  ) {}
+
   public async sendToAgent(target: AgentKind, text: string): Promise<string> {
     if (process.platform !== "win32") {
       throw new Error("The official UI bridge is currently implemented for Windows only.");
     }
 
+    this.logInfo(`bridge start target=${target} chars=${text.length}`);
+
+    // Safety: verify VS Code workspace window is the foreground window
+    await this.assertForegroundWorkspaceWindow("before-bridge");
+
     const previousClipboard = await this.readClipboardSafely();
     await vscode.env.clipboard.writeText(text);
+    this.logInfo(`clipboard prepared chars=${text.length}`);
 
     try {
       await this.focusTarget(target);
       await this.delay(this.getFocusDelay(target));
       await this.sendKeys(["^v", this.getSubmitKeys(target, text)]);
+      this.logInfo(`bridge complete target=${target}`);
+    } catch (error) {
+      this.logError(`bridge failed target=${target}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     } finally {
       void this.restoreClipboard(previousClipboard);
     }
@@ -127,7 +144,80 @@ export class OfficialUiBridge {
     throw new Error(`Unable to execute any of the commands: ${commands.join(", ")}`);
   }
 
+  private async assertForegroundWorkspaceWindow(stage: string): Promise<void> {
+    const [windows, foregroundPid] = await Promise.all([this.listWindows(), this.getForegroundPid()]);
+    const result = isForegroundWorkspaceWindow(windows, foregroundPid, this.workspaceCwd);
+    if (!result.ok) {
+      this.logError(`foreground check failed stage=${stage} foregroundPid=${foregroundPid ?? "unknown"} error=${result.error ?? ""}`);
+      throw new Error(result.error || "当前前台窗口不是 Broker 所在 VS Code 工作区。");
+    }
+    this.logInfo(`foreground check ok stage=${stage} pid=${result.window?.pid} title="${result.window?.title ?? ""}"`);
+  }
+
+  private async listWindows(): Promise<WindowSnapshot[]> {
+    const script = [
+      "Get-Process |",
+      "Where-Object { $_.MainWindowTitle } |",
+      "Select-Object Id,ProcessName,MainWindowTitle |",
+      "ConvertTo-Json -Compress"
+    ].join(" ");
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true, maxBuffer: 1024 * 1024 }
+    );
+    const trimmed = stdout.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const parsed = JSON.parse(trimmed) as unknown;
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return rows
+      .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+      .map((entry) => ({
+        pid: Number(entry.Id),
+        processName: String(entry.ProcessName ?? ""),
+        title: String(entry.MainWindowTitle ?? "")
+      }))
+      .filter((entry) => Number.isFinite(entry.pid) && entry.title.trim());
+  }
+
+  private async getForegroundPid(): Promise<number | undefined> {
+    const script = [
+      "$signature = @'",
+      "using System;",
+      "using System.Runtime.InteropServices;",
+      "public static class Win32BrokerForeground {",
+      "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
+      "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);",
+      "}",
+      "'@",
+      "Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue",
+      "$hwnd = [Win32BrokerForeground]::GetForegroundWindow()",
+      "$foregroundProcessId = [uint32]0",
+      "[void][Win32BrokerForeground]::GetWindowThreadProcessId($hwnd, [ref]$foregroundProcessId)",
+      "Write-Output $foregroundProcessId"
+    ].join("\n");
+
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true }
+    );
+    const pid = Number(stdout.trim());
+    return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+  }
+
   private async delay(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private logInfo(message: string): void {
+    this.logger?.info(message);
+  }
+
+  private logError(message: string): void {
+    this.logger?.error(message);
   }
 }

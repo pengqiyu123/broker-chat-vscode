@@ -61,6 +61,7 @@ interface PendingAutoForward {
   sourceAgent: AgentKind;
   targetAgent: AgentKind;
   sessionId: string;
+  sourcePath?: string;
   userMessageId: string;
   userMessageIndex: number;
   keyword: string;
@@ -79,7 +80,6 @@ interface TriggerCandidate {
 }
 
 export class AutoForwardEngine {
-  private readonly stablePollsRequired: number;
   private readonly now: () => number;
   private initialized = false;
   private pending: PendingAutoForward | undefined;
@@ -90,8 +90,7 @@ export class AutoForwardEngine {
     status: "idle"
   };
 
-  public constructor(options?: { stablePollsRequired?: number; now?: () => number }) {
-    this.stablePollsRequired = Math.max(1, options?.stablePollsRequired ?? 3);
+  public constructor(options?: { now?: () => number }) {
     this.now = options?.now ?? Date.now;
   }
 
@@ -127,6 +126,7 @@ export class AutoForwardEngine {
       sourceAgent: trigger.session.agent,
       targetAgent: trigger.targetAgent,
       sessionId: trigger.session.sessionId,
+      sourcePath: trigger.session.sourcePath,
       userMessageId: trigger.userMessage.id,
       userMessageIndex: trigger.userMessageIndex,
       keyword: trigger.keyword,
@@ -139,6 +139,18 @@ export class AutoForwardEngine {
 
   public getState(): AutoForwardState {
     return { ...this.state };
+  }
+
+  public getPendingSession(): { agent: AgentKind; sessionId: string; sourcePath?: string } | undefined {
+    if (!this.pending) {
+      return undefined;
+    }
+
+    return {
+      agent: this.pending.sourceAgent,
+      sessionId: this.pending.sessionId,
+      sourcePath: this.pending.sourcePath
+    };
   }
 
   public resetBaseline(monitor: OfficialMonitorSnapshot, enabled = true): void {
@@ -267,6 +279,10 @@ export class AutoForwardEngine {
         if (!match) {
           return;
         }
+        if (match.target === session.agent) {
+          this.seenUserMessageIds.add(message.id);
+          return;
+        }
 
         candidates.push({
           session,
@@ -316,7 +332,15 @@ export class AutoForwardEngine {
       }
     }
 
-    return stableCount >= this.stablePollsRequired;
+    if (sourceAgent === "codex") {
+      if (message.meta?.codexComplete === true) {
+        return true;
+      }
+
+      return message.meta?.codexHasTurnEvents !== true && message.meta?.codexLegacyStable === true && stableCount >= 2;
+    }
+
+    return false;
   }
 
   private buildReplySignature(session: MonitoredSession, message: ChatMessage): string {
@@ -378,7 +402,7 @@ export function matchAutoForwardKeyword(
   for (const target of ["codex", "claude"] as const) {
     for (const keyword of keywords[target]) {
       const normalizedKeyword = normalizeText(keyword);
-      if (normalizedKeyword && normalizedText.includes(normalizedKeyword)) {
+      if (normalizedKeyword && normalizedText.startsWith(normalizedKeyword)) {
         return {
           target,
           keyword
@@ -411,7 +435,7 @@ function cloneDefaultKeywords(): AutoForwardKeywords {
 }
 
 function normalizeText(value: string): string {
-  return value.replace(/\s+/g, "").toLowerCase();
+  return value.trimStart().toLowerCase();
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

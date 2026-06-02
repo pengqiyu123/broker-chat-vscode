@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import type { Dirent } from "fs";
 import * as os from "os";
 import * as path from "path";
-import { ChatMessage, MonitoredSession, OfficialMonitorSnapshot } from "../types";
+import { ChatMessage, MonitoredSession, OfficialMonitorSnapshot, PreferredMonitorSession } from "../types";
 import { normalizePath } from "../utils";
 
 interface CodexSessionMeta {
@@ -18,12 +18,22 @@ interface ClaudeSessionIndex {
   entrypoint?: string;
 }
 
+interface CodexTurnState {
+  hasTurnEvents: boolean;
+  active: boolean;
+  messageIndexes: number[];
+}
+
+interface CodexRawMessage extends Omit<ChatMessage, "id"> {
+  meta: Record<string, string | number | boolean>;
+}
+
 export class OfficialTranscriptMonitor {
   public constructor(private readonly workspaceCwd: string) {}
 
-  public async readSnapshot(): Promise<OfficialMonitorSnapshot> {
+  public async readSnapshot(preferredSession?: PreferredMonitorSession): Promise<OfficialMonitorSnapshot> {
     const [codexResult, claudeResult] = await Promise.allSettled([
-      this.readCodexSession(this.workspaceCwd),
+      this.readCodexSession(this.workspaceCwd, preferredSession?.agent === "codex" ? preferredSession : undefined),
       this.readClaudeSession(this.workspaceCwd)
     ]);
 
@@ -37,10 +47,33 @@ export class OfficialTranscriptMonitor {
     };
   }
 
-  private async readCodexSession(workspaceCwd: string): Promise<MonitoredSession | undefined> {
+  public async parseCodexSessionForTest(
+    filePath: string,
+    updatedAt: number,
+    workspaceCwd = this.workspaceCwd
+  ): Promise<MonitoredSession | undefined> {
+    return this.parseCodexSession(filePath, updatedAt, workspaceCwd);
+  }
+
+  private async readCodexSession(
+    workspaceCwd: string,
+    preferredSession?: PreferredMonitorSession
+  ): Promise<MonitoredSession | undefined> {
     const sessionsRoot = path.join(os.homedir(), ".codex", "sessions");
     const files = await this.findFiles(sessionsRoot, (filePath) => filePath.endsWith(".jsonl"));
     const enriched: Array<{ filePath: string; stat: Awaited<ReturnType<typeof fs.stat>> }> = [];
+
+    if (preferredSession?.sourcePath) {
+      try {
+        const stat = await fs.stat(preferredSession.sourcePath);
+        const session = await this.parseCodexSession(preferredSession.sourcePath, Number(stat.mtimeMs), workspaceCwd);
+        if (session?.sessionId === preferredSession.sessionId) {
+          return session;
+        }
+      } catch {
+        // Fall through to the normal latest-session scan.
+      }
+    }
 
     for (const filePath of files) {
       const stat = await fs.stat(filePath);
@@ -67,7 +100,12 @@ export class OfficialTranscriptMonitor {
     const content = await fs.readFile(filePath, "utf8");
     const lines = content.split(/\r?\n/).filter(Boolean);
     let meta: CodexSessionMeta | undefined;
-    const rawMessages: Omit<ChatMessage, "id">[] = [];
+    const rawMessages: CodexRawMessage[] = [];
+    const turnState: CodexTurnState = {
+      hasTurnEvents: false,
+      active: false,
+      messageIndexes: []
+    };
 
     for (const line of lines) {
       let parsed: Record<string, unknown>;
@@ -79,6 +117,11 @@ export class OfficialTranscriptMonitor {
 
       if (parsed.type === "session_meta") {
         meta = parsed.payload as CodexSessionMeta;
+        continue;
+      }
+
+      if (parsed.type === "event_msg") {
+        this.applyCodexEvent(parsed.payload, rawMessages, turnState);
         continue;
       }
 
@@ -111,10 +154,17 @@ export class OfficialTranscriptMonitor {
         createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
         meta: {
           monitorAgent: "codex",
-          official: true
+          official: true,
+          ...(turnState.hasTurnEvents && role === "codex" ? { codexHasTurnEvents: true } : {}),
+          ...(typeof payload.phase === "string" ? { phase: payload.phase } : {})
         }
       });
+      if (turnState.active && role === "codex") {
+        turnState.messageIndexes.push(rawMessages.length - 1);
+      }
     }
+
+    this.applyCodexLegacyCompletion(rawMessages, updatedAt);
 
     if (
       !meta ||
@@ -142,6 +192,78 @@ export class OfficialTranscriptMonitor {
       messageCount: messages.length,
       messages
     };
+  }
+
+  private applyCodexEvent(payload: unknown, rawMessages: CodexRawMessage[], turnState: CodexTurnState): void {
+    if (!this.isObject(payload)) {
+      return;
+    }
+
+    if (payload.type === "task_started") {
+      turnState.hasTurnEvents = true;
+      turnState.active = true;
+      turnState.messageIndexes = [];
+      return;
+    }
+
+    if (payload.type !== "task_complete") {
+      return;
+    }
+
+    turnState.hasTurnEvents = true;
+    const lastAgentMessage = typeof payload.last_agent_message === "string" ? payload.last_agent_message.trim() : "";
+    const completedIndex = lastAgentMessage
+      ? this.findMatchingCodexTurnMessage(rawMessages, turnState.messageIndexes, lastAgentMessage)
+      : this.findLatestCodexFinalAnswer(rawMessages, turnState.messageIndexes);
+    if (typeof completedIndex === "number") {
+      rawMessages[completedIndex].meta.codexComplete = true;
+    }
+
+    turnState.active = false;
+    turnState.messageIndexes = [];
+  }
+
+  private findMatchingCodexTurnMessage(
+    rawMessages: CodexRawMessage[],
+    messageIndexes: number[],
+    lastAgentMessage: string
+  ): number | undefined {
+    for (let index = messageIndexes.length - 1; index >= 0; index -= 1) {
+      const messageIndex = messageIndexes[index];
+      const message = rawMessages[messageIndex];
+      if (message?.role === "codex" && message.text.trim() === lastAgentMessage) {
+        return messageIndex;
+      }
+    }
+
+    return this.findLatestCodexFinalAnswer(rawMessages, messageIndexes);
+  }
+
+  private findLatestCodexFinalAnswer(rawMessages: CodexRawMessage[], messageIndexes: number[]): number | undefined {
+    for (let index = messageIndexes.length - 1; index >= 0; index -= 1) {
+      const messageIndex = messageIndexes[index];
+      const message = rawMessages[messageIndex];
+      if (message?.role === "codex" && message.meta.phase === "final_answer") {
+        return messageIndex;
+      }
+    }
+
+    return undefined;
+  }
+
+  private applyCodexLegacyCompletion(rawMessages: CodexRawMessage[], updatedAt: number): void {
+    const hasTurnEvents = rawMessages.some((message) => message.meta.codexHasTurnEvents === true);
+    if (hasTurnEvents || Date.now() - updatedAt < 120_000) {
+      return;
+    }
+
+    for (let index = rawMessages.length - 1; index >= 0; index -= 1) {
+      const message = rawMessages[index];
+      if (message.role === "codex" && message.text.trim()) {
+        message.meta.codexLegacyStable = true;
+        return;
+      }
+    }
   }
 
   private async readClaudeSession(workspaceCwd: string): Promise<MonitoredSession | undefined> {

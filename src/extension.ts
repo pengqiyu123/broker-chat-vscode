@@ -1,14 +1,17 @@
 import * as vscode from "vscode";
+import { BrokerLogger } from "./automation/BrokerLogger";
 import { BrokerController } from "./controller/brokerController";
 import { BrokerPanel } from "./ui/BrokerPanel";
 import { BrokerSidebarViewProvider } from "./ui/BrokerSidebarViewProvider";
 
 let controller: BrokerController | undefined;
+let logger: BrokerLogger | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  controller = new BrokerController(cwd);
-  context.subscriptions.push(controller);
+  logger = new BrokerLogger();
+  controller = new BrokerController(cwd, logger);
+  context.subscriptions.push(logger, controller);
 
   const sidebarProvider = new BrokerSidebarViewProvider(context, controller);
   context.subscriptions.push(
@@ -47,6 +50,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand("broker.stopActiveResponse", async () => {
       await controller?.stop();
+    }),
+    vscode.commands.registerCommand("broker.showLogs", () => {
+      logger?.toggle();
     })
   );
 }
