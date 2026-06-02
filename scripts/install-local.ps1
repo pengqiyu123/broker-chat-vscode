@@ -23,9 +23,21 @@ $targetDir = Join-Path $extensionRoot $targetDirName
 Write-Host "Compiling extension..."
 Push-Location $projectRoot
 try {
-  npm run build:all | Out-Host
+  npm run compile | Out-Host
 } finally {
   Pop-Location
+}
+
+$staleDistDirs = @(
+  "dist\mcp",
+  "dist\server"
+)
+
+foreach ($relativePath in $staleDistDirs) {
+  $stalePath = Join-Path $projectRoot $relativePath
+  if (Test-Path $stalePath) {
+    Remove-Item -LiteralPath $stalePath -Recurse -Force
+  }
 }
 
 if (-not (Test-Path $extensionRoot)) {

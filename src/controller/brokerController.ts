@@ -11,12 +11,18 @@ import {
   ReturnMode,
   UsageSummary
 } from "../types";
-import { createId, normalizePath, otherAgent } from "../utils";
+import { createId, otherAgent } from "../utils";
 import { ClaudeAdapter } from "../adapters/ClaudeAdapter";
 import { CodexAdapter } from "../adapters/codexAdapter";
+import {
+  AutoForwardDecision,
+  AutoForwardEngine,
+  DEFAULT_AUTO_FORWARD_KEYWORDS,
+  normalizeAutoForwardKeywords
+} from "../automation/AutoForwardEngine";
 import { OfficialUiBridge } from "../automation/OfficialUiBridge";
 import { OfficialTranscriptMonitor } from "../monitor/OfficialTranscriptMonitor";
-import { buildMonitoredBridgePrompt, findLatestModelMessage, MonitoredBridgeMode } from "./bridgePrompt";
+import { buildBridgeAnswerPrompt, buildMonitoredBridgePrompt, MonitoredBridgeMode } from "./bridgePrompt";
 
 interface BridgeActionResult {
   ok: boolean;
@@ -34,6 +40,7 @@ export class BrokerController implements vscode.Disposable {
   private readonly messages: ChatMessage[] = [];
   private readonly adapters: Record<AgentKind, AgentAdapter>;
   private readonly transcriptMonitor: OfficialTranscriptMonitor;
+  private readonly autoForwardEngine = new AutoForwardEngine();
   private readonly uiBridge = new OfficialUiBridge();
   private readonly pollTimer: NodeJS.Timeout;
   private monitorSnapshot = {
@@ -43,6 +50,11 @@ export class BrokerController implements vscode.Disposable {
   private bridgeState: BrokerSnapshot["bridge"] = {
     busy: false
   };
+  private autoForwardState: BrokerSnapshot["autoForward"] = {
+    enabled: true,
+    status: "idle"
+  };
+  private autoForwardSendActive = false;
 
   private currentTarget: AgentKind = "codex";
   private busy = false;
@@ -75,6 +87,7 @@ export class BrokerController implements vscode.Disposable {
   }
 
   public getSnapshot(): BrokerSnapshot {
+    const config = this.getConfig();
     return {
       workspaceCwd: this.cwd,
       currentTarget: this.currentTarget,
@@ -88,17 +101,41 @@ export class BrokerController implements vscode.Disposable {
         totalSteps: this.autoDebateState.totalSteps
       },
       monitor: this.monitorSnapshot,
-      bridge: this.bridgeState
+      bridge: this.bridgeState,
+      autoForward: {
+        ...this.autoForwardState,
+        enabled: config.autoForwardEnabled,
+        keywords: config.autoForwardKeywords
+      }
     };
   }
 
   public async refreshMonitor(): Promise<void> {
     this.monitorSnapshot = await this.transcriptMonitor.readSnapshot();
+    await this.evaluateAutoForward();
     this.emit();
   }
 
   public async bridgeMonitoredMessage(
     sourceAgent: AgentKind,
+    sessionId: string,
+    messageId: string,
+    mode: MonitoredBridgeMode,
+    extraText = ""
+  ): Promise<BridgeActionResult> {
+    return this.bridgeMonitoredMessageToTarget(
+      sourceAgent,
+      otherAgent(sourceAgent),
+      sessionId,
+      messageId,
+      mode,
+      extraText
+    );
+  }
+
+  private async bridgeMonitoredMessageToTarget(
+    sourceAgent: AgentKind,
+    target: AgentKind,
     sessionId: string,
     messageId: string,
     mode: MonitoredBridgeMode,
@@ -113,7 +150,7 @@ export class BrokerController implements vscode.Disposable {
         busy: this.bridgeState.busy
       };
       this.emit();
-      return { ok: false, error, source: sourceAgent, mode };
+      return { ok: false, error, source: sourceAgent, target, mode };
     }
 
     const session = sourceAgent === "codex" ? this.monitorSnapshot.codex : this.monitorSnapshot.claude;
@@ -127,7 +164,7 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
-      return { ok: false, error, source: sourceAgent, mode };
+      return { ok: false, error, source: sourceAgent, target, mode };
     }
 
     const messageIndex = session.messages.findIndex((entry) => entry.id === messageId);
@@ -141,16 +178,19 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
-      return { ok: false, error, source: sourceAgent, mode, sessionId };
+      return { ok: false, error, source: sourceAgent, target, mode, sessionId };
     }
 
-    const promptResult = buildMonitoredBridgePrompt(sourceAgent, session.messages, messageIndex, mode, extraText);
+    const promptResult =
+      mode === "forward-answer"
+        ? buildBridgeAnswerPrompt(sourceAgent, target, session.messages[messageIndex]?.text ?? "", extraText)
+        : buildMonitoredBridgePrompt(sourceAgent, session.messages, messageIndex, mode, extraText);
     if (!promptResult.ok) {
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
         mode,
-        target: promptResult.target,
+        target,
         error: promptResult.error,
         updatedAt: Date.now()
       };
@@ -159,14 +199,12 @@ export class BrokerController implements vscode.Disposable {
         ok: false,
         error: promptResult.error,
         source: sourceAgent,
-        target: promptResult.target,
+        target,
         mode,
         sessionId,
         messageId
       };
     }
-
-    const target = promptResult.target;
 
     this.bridgeState = {
       busy: true,
@@ -205,85 +243,25 @@ export class BrokerController implements vscode.Disposable {
     }
   }
 
-  public async forwardLatestMonitoredReply(
-    sourceAgent: AgentKind,
-    mode: MonitoredBridgeMode,
-    workspaceCwd: string,
-    extraText = "",
-    afterMessageId?: string,
-    waitMs = 5000
-  ): Promise<BridgeActionResult> {
-    this.assertWorkspace(workspaceCwd);
-
-    const latest = await this.waitForLatestMonitoredReply(sourceAgent, afterMessageId, waitMs);
-    if (!latest.ok) {
-      this.bridgeState = {
-        busy: false,
-        source: sourceAgent,
-        mode,
-        error: latest.error,
-        updatedAt: Date.now()
-      };
-      this.emit();
-      return { ok: false, error: latest.error, source: sourceAgent, mode };
-    }
-
-    return this.bridgeMonitoredMessage(
-      sourceAgent,
-      latest.session.sessionId,
-      latest.message.id,
-      mode,
-      extraText
-    );
-  }
-
-  public async sendToAgentViaBridge(target: AgentKind, text: string, workspaceCwd: string): Promise<string> {
-    this.assertWorkspace(workspaceCwd);
-
-    if (!text.trim()) {
-      throw new Error("Text is required.");
-    }
-
-    if (this.bridgeState.busy) {
-      throw new Error("已有一条桥接发送正在进行，请稍后重试。");
-    }
-
-    this.bridgeState = {
-      busy: true,
-      target,
-      mode: "direct-send",
-      message: `正在桥接到 ${target === "codex" ? "Codex" : "Claude"}...`,
-      updatedAt: Date.now()
-    };
-    this.emit();
-
-    try {
-      const result = await this.uiBridge.sendToAgent(target, text);
-      this.bridgeState = {
-        busy: false,
-        target,
-        mode: "direct-send",
-        message: result,
-        updatedAt: Date.now()
-      };
-      this.emit();
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.bridgeState = {
-        busy: false,
-        target,
-        mode: "direct-send",
-        error: message,
-        updatedAt: Date.now()
-      };
-      this.emit();
-      throw new Error(message);
-    }
-  }
-
   public setCurrentTarget(target: AgentKind): void {
     this.currentTarget = target;
+    this.emit();
+  }
+
+  public async setAutoForwardEnabled(enabled: boolean): Promise<void> {
+    await vscode.workspace.getConfiguration("broker").update("autoForwardEnabled", enabled, vscode.ConfigurationTarget.Workspace);
+    this.autoForwardEngine.resetBaseline(this.monitorSnapshot, enabled);
+    this.autoForwardState = this.autoForwardEngine.getState();
+    this.emit();
+  }
+
+  public async setAutoForwardKeywords(keywords: unknown): Promise<void> {
+    const normalizedKeywords = normalizeAutoForwardKeywords(keywords);
+    await vscode.workspace
+      .getConfiguration("broker")
+      .update("autoForwardKeywords", normalizedKeywords, vscode.ConfigurationTarget.Workspace);
+    this.autoForwardEngine.resetBaseline(this.monitorSnapshot, this.getConfig().autoForwardEnabled);
+    this.autoForwardState = this.autoForwardEngine.getState();
     this.emit();
   }
 
@@ -649,68 +627,51 @@ export class BrokerController implements vscode.Disposable {
     return this.messages.find((entry) => entry.id === message.replyToUserMessageId);
   }
 
-  private assertWorkspace(workspaceCwd: string): void {
-    const requestedCwd = normalizePath(workspaceCwd);
-    const activeCwd = normalizePath(this.cwd);
-    if (!requestedCwd || requestedCwd !== activeCwd) {
-      throw new Error(`Workspace mismatch. Broker is attached to "${this.cwd}".`);
+  private async evaluateAutoForward(): Promise<void> {
+    if (this.autoForwardSendActive) {
+      return;
     }
+
+    const config = this.getConfig();
+    const decision = this.autoForwardEngine.evaluate(this.monitorSnapshot, {
+      enabled: config.autoForwardEnabled,
+      keywords: config.autoForwardKeywords
+    });
+    this.autoForwardState = this.autoForwardEngine.getState();
+
+    if (!decision) {
+      return;
+    }
+
+    await this.executeAutoForward(decision);
   }
 
-  private async waitForLatestMonitoredReply(
-    sourceAgent: AgentKind,
-    afterMessageId: string | undefined,
-    waitMs: number
-  ): Promise<
-    | {
-        ok: true;
-        session: NonNullable<BrokerSnapshot["monitor"]["codex"]>;
-        message: ChatMessage;
+  private async executeAutoForward(decision: AutoForwardDecision): Promise<void> {
+    this.autoForwardSendActive = true;
+    this.autoForwardState = this.autoForwardEngine.getState();
+    this.emit();
+
+    try {
+      const result = await this.bridgeMonitoredMessageToTarget(
+        decision.sourceAgent,
+        decision.targetAgent,
+        decision.sessionId,
+        decision.messageId,
+        decision.mode,
+        ""
+      );
+
+      if (result.ok) {
+        this.autoForwardEngine.markForwarded(decision);
+      } else {
+        this.autoForwardEngine.markFailed(decision, result.error || "自动转发失败。");
       }
-    | {
-        ok: false;
-        error: string;
-      }
-  > {
-    const boundedWaitMs = Math.min(Math.max(waitMs, 0), 30_000);
-    const deadline = Date.now() + boundedWaitMs;
-    const sourceLabel = sourceAgent === "codex" ? "Codex" : "Claude Code";
-
-    while (true) {
-      await this.refreshMonitor();
-      const session = sourceAgent === "codex" ? this.monitorSnapshot.codex : this.monitorSnapshot.claude;
-      const latest = session ? findLatestModelMessage(session.messages, sourceAgent) : undefined;
-
-      if (session && latest && (!afterMessageId || latest.message.id !== afterMessageId)) {
-        return {
-          ok: true,
-          session,
-          message: latest.message
-        };
-      }
-
-      if (Date.now() >= deadline) {
-        if (!session) {
-          return {
-            ok: false,
-            error: `当前项目暂无 ${sourceLabel} 官方会话。`
-          };
-        }
-
-        if (!latest) {
-          return {
-            ok: false,
-            error: `当前项目暂无 ${sourceLabel} 官方回复可转发。`
-          };
-        }
-
-        return {
-          ok: false,
-          error: `等待新的 ${sourceLabel} 回复超时；Broker 仍看到上一条回复。`
-        };
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (error) {
+      this.autoForwardEngine.markFailed(decision, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.autoForwardState = this.autoForwardEngine.getState();
+      this.autoForwardSendActive = false;
+      this.emit();
     }
   }
 
@@ -742,7 +703,10 @@ export class BrokerController implements vscode.Disposable {
       defaultAutoDebateRounds: config.get<AutoDebateRounds>("defaultAutoDebateRounds", 1),
       claudePermissionMode: config.get<string>("claudePermissionMode", "default"),
       claudeAllowedTools: config.get<string[]>("claudeAllowedTools", []),
-      mcpPort: config.get<number>("mcpPort", 14711)
+      autoForwardEnabled: config.get<boolean>("autoForwardEnabled", true),
+      autoForwardKeywords: normalizeAutoForwardKeywords(
+        config.get<unknown>("autoForwardKeywords", DEFAULT_AUTO_FORWARD_KEYWORDS)
+      )
     };
   }
 }

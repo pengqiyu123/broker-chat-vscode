@@ -2,7 +2,7 @@
   "name": "broker-chat-vscode",
   "displayName": "Broker Chat",
   "description": "A local VS Code broker panel for Codex and Claude Code.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -109,10 +109,48 @@
           "default": [],
           "description": "Optional allowed tools forwarded to Claude as --allowedTools."
         },
-        "broker.mcpPort": {
-          "type": "number",
-          "default": 14711,
-          "description": "Port for the Broker Chat MCP HTTP API on localhost."
+        "broker.autoForwardEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic forwarding when Broker detects target keywords in official transcript user messages."
+        },
+        "broker.autoForwardKeywords": {
+          "type": "object",
+          "default": {
+            "codex": [
+              "给Codex命令",
+              "给codex命令",
+              "发送给codex",
+              "发给codex",
+              "转给codex",
+              "转发给codex",
+              "问codex",
+              "给 Codex",
+              "发送给 Codex",
+              "发给 Codex",
+              "转给 Codex",
+              "转发给 Codex",
+              "问 Codex"
+            ],
+            "claude": [
+              "回复ClaudeCode",
+              "回复claudecode",
+              "给ClaudeCode命令",
+              "给claudecode命令",
+              "发送给claude",
+              "发给claude",
+              "转给claude",
+              "转发给claude",
+              "问claude",
+              "给 Claude",
+              "发送给 Claude",
+              "发给 Claude",
+              "转给 Claude",
+              "转发给 Claude",
+              "问 Claude"
+            ]
+          },
+          "description": "Automatic forwarding keywords grouped by target agent."
         }
       }
     }
@@ -120,20 +158,16 @@
   "scripts": {
     "compile": "tsc -p ./",
     "test:bridge": "node scripts/test-bridge-prompt.js",
-    "build:mcp": "tsc -p src/mcp/tsconfig.mcp.json --noEmit && node scripts/build-mcp.js",
-    "build:all": "npm run compile && npm run build:mcp",
+    "test:auto-forward": "node scripts/test-auto-forward.js",
     "watch": "tsc -w -p ./",
     "package:vsix": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-vsix.ps1",
     "install:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local.ps1",
     "uninstall:local": "powershell -ExecutionPolicy Bypass -File .\\scripts\\uninstall-local.ps1"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.15.3",
     "@types/vscode": "^1.98.0",
     "@vscode/vsce": "^3.6.2",
-    "esbuild": "^0.28.0",
-    "typescript": "^5.8.3",
-    "zod": "^4.4.3"
+    "typescript": "^5.8.3"
   }
 }

@@ -3,11 +3,6 @@ import { otherAgent } from "../utils";
 
 export type MonitoredBridgeMode = "merge-forward" | "forward-answer";
 
-export interface LatestModelMessage {
-  message: ChatMessage;
-  messageIndex: number;
-}
-
 export interface MonitoredBridgePromptSuccess {
   ok: true;
   target: AgentKind;
@@ -21,6 +16,29 @@ export interface MonitoredBridgePromptFailure {
 }
 
 export type MonitoredBridgePromptResult = MonitoredBridgePromptSuccess | MonitoredBridgePromptFailure;
+
+export function buildBridgeAnswerPrompt(
+  sourceAgent: AgentKind,
+  target: AgentKind,
+  text: string,
+  extraText = ""
+): MonitoredBridgePromptResult {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    return {
+      ok: false,
+      target,
+      error: "回答正文不能为空。"
+    };
+  }
+
+  const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
+  return {
+    ok: true,
+    target,
+    prompt: appendBridgeExtraText(`${sourceLabel}说：\n${trimmedText}`, extraText)
+  };
+}
 
 export function buildMonitoredBridgePrompt(
   sourceAgent: AgentKind,
@@ -41,40 +59,35 @@ export function buildMonitoredBridgePrompt(
   }
 
   const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
-  let prompt = `${sourceLabel}说：\n${message.text.trim()}`;
+  if (mode === "forward-answer") {
+    return buildBridgeAnswerPrompt(sourceAgent, target, message.text, extraText);
+  }
 
-  if (mode === "merge-forward") {
-    const relatedUser = findAdjacentUserMessage(messages, messageIndex);
-    if (!relatedUser) {
-      return {
-        ok: false,
-        target,
-        error: "这条回复前没有找到可合并的用户问题。"
-      };
-    }
+  if (!message.text.trim()) {
+    return {
+      ok: false,
+      target,
+      error: "回答正文不能为空。"
+    };
+  }
 
-    prompt = `User question:\n${relatedUser.text.trim()}\n\n${sourceLabel} answer:\n${message.text.trim()}`;
+  const relatedUser = findAdjacentUserMessage(messages, messageIndex);
+  if (!relatedUser) {
+    return {
+      ok: false,
+      target,
+      error: "这条回复前没有找到可合并的用户问题。"
+    };
   }
 
   return {
     ok: true,
     target,
-    prompt: appendBridgeExtraText(prompt, extraText)
-  };
-}
-
-export function findLatestModelMessage(messages: ChatMessage[], sourceAgent: AgentKind): LatestModelMessage | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === sourceAgent && message.text.trim()) {
-      return {
-        message,
-        messageIndex: index
-      };
-    }
+    prompt: appendBridgeExtraText(
+      `User question:\n${relatedUser.text.trim()}\n\n${sourceLabel} answer:\n${message.text.trim()}`,
+      extraText
+    )
   }
-
-  return undefined;
 }
 
 function findAdjacentUserMessage(messages: ChatMessage[], fromIndex: number): ChatMessage | undefined {

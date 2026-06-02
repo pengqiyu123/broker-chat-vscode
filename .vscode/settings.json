@@ -1,0 +1,37 @@
+{
+    "broker.autoForwardEnabled": true,
+    "broker.autoForwardKeywords": {
+        "codex": [
+            "给Codex命令",
+            "给codex命令",
+            "发送给codex",
+            "发给codex",
+            "转给codex",
+            "转发给codex",
+            "问codex",
+            "给 Codex",
+            "发送给 Codex",
+            "发给 Codex",
+            "转给 Codex",
+            "转发给 Codex",
+            "问 Codex"
+        ],
+        "claude": [
+            "回复ClaudeCode",
+            "回复claudecode",
+            "给ClaudeCode命令",
+            "给claudecode命令",
+            "发送给claude",
+            "发给claude",
+            "转给claude",
+            "转发给claude",
+            "问claude",
+            "给 Claude",
+            "发送给 Claude",
+            "发给 Claude",
+            "转给 Claude",
+            "转发给 Claude",
+            "问 Claude"
+        ]
+    }
+}

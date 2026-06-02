@@ -2,6 +2,12 @@ export type AgentKind = "codex" | "claude";
 export type ChatRole = "user" | AgentKind | "system" | "approval";
 export type ReturnMode = "compact" | "full";
 export type AutoDebateRounds = 1 | 2 | 3;
+export type AutoForwardStatus = "disabled" | "idle" | "waiting" | "sending" | "sent" | "failed";
+
+export interface AutoForwardKeywords {
+  codex: string[];
+  claude: string[];
+}
 
 export interface UsageSummary {
   inputTokens?: number;
@@ -79,6 +85,7 @@ export interface BrokerSnapshot {
   };
   monitor: OfficialMonitorSnapshot;
   bridge: BridgeStatus;
+  autoForward: AutoForwardState;
 }
 
 export interface MonitoredSession {
@@ -105,7 +112,21 @@ export interface BridgeStatus {
   busy: boolean;
   target?: AgentKind;
   source?: AgentKind;
-  mode?: "merge-forward" | "forward-answer" | "direct-send";
+  mode?: "merge-forward" | "forward-answer";
+  message?: string;
+  error?: string;
+  updatedAt?: number;
+}
+
+export interface AutoForwardState {
+  enabled: boolean;
+  status: AutoForwardStatus;
+  source?: AgentKind;
+  target?: AgentKind;
+  keyword?: string;
+  keywords?: AutoForwardKeywords;
+  userMessageId?: string;
+  replyMessageId?: string;
   message?: string;
   error?: string;
   updatedAt?: number;
@@ -115,12 +136,16 @@ export interface WebviewInboundMessage {
   type:
     | "ready"
     | "refresh-monitor"
-    | "bridge-send";
+    | "bridge-send"
+    | "toggle-auto-forward"
+    | "save-auto-forward-keywords";
   sourceAgent?: AgentKind;
   sessionId?: string;
   messageId?: string;
   mode?: "merge-forward" | "forward-answer";
   extraText?: string;
+  autoForwardEnabled?: boolean;
+  autoForwardKeywords?: AutoForwardKeywords;
 }
 
 export interface WebviewOutboundMessage {
@@ -158,5 +183,6 @@ export interface BrokerConfig {
   defaultAutoDebateRounds: AutoDebateRounds;
   claudePermissionMode: string;
   claudeAllowedTools: string[];
-  mcpPort: number;
+  autoForwardEnabled: boolean;
+  autoForwardKeywords: AutoForwardKeywords;
 }

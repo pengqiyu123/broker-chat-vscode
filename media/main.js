@@ -2,9 +2,50 @@
   const vscode = acquireVsCodeApi();
   const PREVIEW_MESSAGE_COUNT = 4;
   const TIMELINE_MESSAGE_COUNT = 12;
+  const DEFAULT_AUTO_FORWARD_KEYWORDS = {
+    codex: [
+      "给Codex命令",
+      "给codex命令",
+      "发送给codex",
+      "发给codex",
+      "转给codex",
+      "转发给codex",
+      "问codex",
+      "给 Codex",
+      "发送给 Codex",
+      "发给 Codex",
+      "转给 Codex",
+      "转发给 Codex",
+      "问 Codex"
+    ],
+    claude: [
+      "回复ClaudeCode",
+      "回复claudecode",
+      "给ClaudeCode命令",
+      "给claudecode命令",
+      "发送给claude",
+      "发给claude",
+      "转给claude",
+      "转发给claude",
+      "问claude",
+      "给 Claude",
+      "发送给 Claude",
+      "发给 Claude",
+      "转给 Claude",
+      "转发给 Claude",
+      "问 Claude"
+    ]
+  };
   const elements = {
     refreshButton: document.getElementById("refreshButton"),
-    summary: document.getElementById("summary"),
+    settingsButton: document.getElementById("settingsButton"),
+    settingsPanel: document.getElementById("settingsPanel"),
+    statusBar: document.getElementById("statusBar"),
+    autoForwardToggle: document.getElementById("autoForwardToggle"),
+    codexKeywords: document.getElementById("codexKeywords"),
+    claudeKeywords: document.getElementById("claudeKeywords"),
+    saveKeywordsButton: document.getElementById("saveKeywordsButton"),
+    resetKeywordsButton: document.getElementById("resetKeywordsButton"),
     codexSession: document.getElementById("codexSession"),
     claudeSession: document.getElementById("claudeSession"),
     codexPreview: document.getElementById("codexPreview"),
@@ -30,12 +71,19 @@
     },
     bridge: {
       busy: false
+    },
+    autoForward: {
+      enabled: true,
+      status: "idle",
+      keywords: DEFAULT_AUTO_FORWARD_KEYWORDS
     }
   };
   let lastRenderSignature = "";
   let queuedSnapshot = null;
   const bridgeNoteDrafts = new Map();
   let deferredRenderTimer = null;
+  let settingsOpen = false;
+  let keywordDraftTouched = false;
 
   function escapeHtml(value) {
     return String(value)
@@ -82,6 +130,7 @@
       currentTarget: nextSnapshot.currentTarget,
       busy: nextSnapshot.busy,
       autoDebate: nextSnapshot.autoDebate,
+      autoForward: nextSnapshot.autoForward,
       bridge: stableBridge,
       monitor: {
         enabled: monitor.enabled,
@@ -304,39 +353,93 @@
       .join("");
   }
 
+  function getAutoForwardKeywords() {
+    const autoForward = snapshot.autoForward || {};
+    const keywords = autoForward.keywords || DEFAULT_AUTO_FORWARD_KEYWORDS;
+    return {
+      codex: Array.isArray(keywords.codex) ? keywords.codex : DEFAULT_AUTO_FORWARD_KEYWORDS.codex,
+      claude: Array.isArray(keywords.claude) ? keywords.claude : DEFAULT_AUTO_FORWARD_KEYWORDS.claude
+    };
+  }
+
+  function keywordsToText(keywords) {
+    return keywords.join("\n");
+  }
+
+  function textToKeywords(value) {
+    return String(value)
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  function renderStatusPill(kind, label, value, title) {
+    return `<span class="status-pill ${escapeHtml(kind)}" title="${escapeHtml(title || value)}">
+      <span class="status-dot"></span>
+      <span class="status-label">${escapeHtml(label)}</span>
+      <span class="status-value">${escapeHtml(value)}</span>
+    </span>`;
+  }
+
+  function syncSettingsFields() {
+    const autoForward = snapshot.autoForward || {};
+    const keywords = getAutoForwardKeywords();
+    if (elements.autoForwardToggle instanceof HTMLInputElement) {
+      elements.autoForwardToggle.checked = autoForward.enabled !== false;
+    }
+
+    if (!keywordDraftTouched) {
+      if (elements.codexKeywords instanceof HTMLTextAreaElement) {
+        elements.codexKeywords.value = keywordsToText(keywords.codex);
+      }
+      if (elements.claudeKeywords instanceof HTMLTextAreaElement) {
+        elements.claudeKeywords.value = keywordsToText(keywords.claude);
+      }
+    }
+  }
+
   function render() {
     const monitor = snapshot.monitor || {};
     const bridge = snapshot.bridge || {};
+    const autoForward = snapshot.autoForward || {};
     const bridgeDetail = bridge.error || bridge.message || "等待操作";
     const bridgeState = bridge.busy ? "发送中" : bridge.error ? "失败" : bridge.message ? "已完成" : "待命";
+    const autoForwardState = autoForward.enabled === false
+      ? "已关闭"
+      : autoForward.status === "waiting"
+        ? "等待"
+        : autoForward.status === "sending"
+          ? "发送中"
+          : autoForward.status === "failed"
+            ? "失败"
+            : autoForward.status === "sent"
+              ? "已完成"
+              : "待命";
+    const autoForwardDetail = autoForward.error || autoForward.message || autoForward.keyword || "等待关键词";
     const workspaceCwd = snapshot.workspaceCwd || "";
     const projectName = workspaceCwd ? workspaceCwd.split(/[/\\]/).pop() : "未知项目";
     const codexPreviewEntries = getRecentEntries(monitor.codex, PREVIEW_MESSAGE_COUNT);
     const claudePreviewEntries = getRecentEntries(monitor.claude, PREVIEW_MESSAGE_COUNT);
     const mergedEntries = getCombinedEntries(monitor);
 
-    elements.summary.innerHTML = `
-      <div class="summary-card">
-        <div class="summary-label">监控状态</div>
-        <div class="summary-value">${monitor.enabled ? "运行中" : "已关闭"}</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">当前项目</div>
-        <div class="summary-value">${escapeHtml(projectName)}</div>
-        <div class="summary-note">${escapeHtml(workspaceCwd)}</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">桥接状态</div>
-        <div class="summary-value">${escapeHtml(bridgeState)}</div>
-        <div class="summary-note">${escapeHtml(bridgeDetail)}</div>
-      </div>
-    `;
+    elements.statusBar.innerHTML = [
+      renderStatusPill("project", "项目", projectName, workspaceCwd),
+      renderStatusPill(monitor.enabled ? "ok" : "off", "监控", monitor.enabled ? "运行中" : "已关闭", ""),
+      renderStatusPill(bridge.busy ? "busy" : bridge.error ? "bad" : "ok", "桥接", bridgeState, bridgeDetail),
+      renderStatusPill(
+        autoForward.enabled === false ? "off" : autoForward.status === "failed" ? "bad" : autoForward.status === "waiting" || autoForward.status === "sending" ? "busy" : "ok",
+        "自动转发",
+        autoForwardState,
+        autoForwardDetail
+      )
+    ].join("");
 
     elements.codexSession.innerHTML = renderSessionCard(monitor.codex, monitor.codexError, "Codex");
     elements.claudeSession.innerHTML = renderSessionCard(monitor.claude, monitor.claudeError, "Claude");
     elements.codexPreview.innerHTML = renderPreview(codexPreviewEntries);
     elements.claudePreview.innerHTML = renderPreview(claudePreviewEntries);
     elements.mergedTimeline.innerHTML = renderMergedTimeline(mergedEntries);
+    syncSettingsFields();
   }
 
   window.addEventListener("message", (event) => {
@@ -361,6 +464,57 @@
 
   elements.refreshButton.addEventListener("click", () => {
     vscode.postMessage({ type: "refresh-monitor" });
+  });
+
+  elements.settingsButton.addEventListener("click", () => {
+    settingsOpen = !settingsOpen;
+    elements.settingsPanel.hidden = !settingsOpen;
+    elements.settingsButton.setAttribute("aria-expanded", settingsOpen ? "true" : "false");
+    if (settingsOpen) {
+      syncSettingsFields();
+    }
+  });
+
+  elements.autoForwardToggle.addEventListener("change", () => {
+    if (!(elements.autoForwardToggle instanceof HTMLInputElement)) {
+      return;
+    }
+    vscode.postMessage({
+      type: "toggle-auto-forward",
+      autoForwardEnabled: elements.autoForwardToggle.checked
+    });
+  });
+
+  elements.saveKeywordsButton.addEventListener("click", () => {
+    const codexKeywords = elements.codexKeywords instanceof HTMLTextAreaElement
+      ? textToKeywords(elements.codexKeywords.value)
+      : DEFAULT_AUTO_FORWARD_KEYWORDS.codex;
+    const claudeKeywords = elements.claudeKeywords instanceof HTMLTextAreaElement
+      ? textToKeywords(elements.claudeKeywords.value)
+      : DEFAULT_AUTO_FORWARD_KEYWORDS.claude;
+
+    keywordDraftTouched = false;
+    vscode.postMessage({
+      type: "save-auto-forward-keywords",
+      autoForwardKeywords: {
+        codex: codexKeywords,
+        claude: claudeKeywords
+      }
+    });
+  });
+
+  elements.resetKeywordsButton.addEventListener("click", () => {
+    keywordDraftTouched = false;
+    if (elements.codexKeywords instanceof HTMLTextAreaElement) {
+      elements.codexKeywords.value = keywordsToText(DEFAULT_AUTO_FORWARD_KEYWORDS.codex);
+    }
+    if (elements.claudeKeywords instanceof HTMLTextAreaElement) {
+      elements.claudeKeywords.value = keywordsToText(DEFAULT_AUTO_FORWARD_KEYWORDS.claude);
+    }
+    vscode.postMessage({
+      type: "save-auto-forward-keywords",
+      autoForwardKeywords: DEFAULT_AUTO_FORWARD_KEYWORDS
+    });
   });
 
   document.body.addEventListener("click", (event) => {
@@ -390,6 +544,9 @@
     }
 
     if (!target.classList.contains("bridge-note-input")) {
+      if (target.classList.contains("keyword-input")) {
+        keywordDraftTouched = true;
+      }
       return;
     }
 

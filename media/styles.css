@@ -31,22 +31,28 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr;
   min-height: 100vh;
 }
 
 .topbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px 12px;
   border-bottom: 1px solid var(--border);
   background: rgba(4, 10, 18, 0.76);
   backdrop-filter: blur(14px);
 }
 
+.topbar-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
 .brand-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
 }
 
@@ -59,16 +65,18 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
-.summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 14px 18px 0;
+.icon-button {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  font-size: 16px;
 }
 
-.summary-card,
 .session-card,
 .verify-panel,
 .timeline-panel,
@@ -79,16 +87,15 @@ body {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
 }
 
-.summary-card {
-  padding: 12px 14px;
-  border-radius: 16px;
+.status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.summary-label,
 .session-meta,
 .session-path,
 .session-cwd,
-.summary-note,
 .timestamp,
 .badge,
 .thinking-label,
@@ -97,15 +104,116 @@ body {
   font-size: 12px;
 }
 
-.summary-value {
-  margin-top: 6px;
-  font-size: 14px;
+.status-pill {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.58);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.status-pill.ok .status-dot {
+  background: #45d483;
+}
+
+.status-pill.busy .status-dot {
+  background: #facc15;
+}
+
+.status-pill.bad .status-dot {
+  background: #fb7185;
+}
+
+.status-pill.off .status-dot {
+  background: #64748b;
+}
+
+.status-label {
+  color: var(--muted);
+}
+
+.status-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
   font-weight: 600;
 }
 
-.summary-note {
-  margin-top: 6px;
-  line-height: 1.4;
+.settings-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.keyword-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.keyword-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.keyword-input {
+  width: 100%;
+  min-height: 124px;
+  resize: vertical;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 12, 0.42);
+  color: var(--text);
+  padding: 9px 10px;
+  font: 12px/1.45 Consolas, "Courier New", monospace;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .monitor-layout {
@@ -425,7 +533,7 @@ button:hover {
 }
 
 @media (max-width: 960px) {
-  .summary,
+  .keyword-grid,
   .session-strip,
   .preview-grid {
     grid-template-columns: 1fr;

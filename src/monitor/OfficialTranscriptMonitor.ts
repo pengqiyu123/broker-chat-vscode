@@ -232,13 +232,15 @@ export class OfficialTranscriptMonitor {
         const timestamp = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Date.now();
 
         if (text.trim()) {
+          const stopReason = typeof message?.stop_reason === "string" ? message.stop_reason : undefined;
           rawMessages.push({
             role: "claude",
             text,
             createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
             meta: {
               monitorAgent: "claude",
-              official: true
+              official: true,
+              ...(stopReason ? { stopReason } : {})
             }
           });
         }

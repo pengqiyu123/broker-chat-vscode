@@ -51,6 +51,14 @@ export class BrokerWebviewConnection implements vscode.Disposable {
           );
         }
         return;
+      case "toggle-auto-forward":
+        if (typeof message.autoForwardEnabled === "boolean") {
+          await this.controller.setAutoForwardEnabled(message.autoForwardEnabled);
+        }
+        return;
+      case "save-auto-forward-keywords":
+        await this.controller.setAutoForwardKeywords(message.autoForwardKeywords);
+        return;
       default:
         return;
     }
@@ -77,15 +85,38 @@ export class BrokerWebviewConnection implements vscode.Disposable {
   <body>
     <div class="app">
       <header class="topbar">
-        <div class="brand">
-          <div class="brand-title">Official Transcript Monitor</div>
-          <div class="brand-subtitle">自动跟随 Codex 与 Claude Code 最新活跃官方对话，不在插件内另存历史</div>
+        <div class="topbar-row">
+          <div class="brand">
+            <div class="brand-title">Broker Chat</div>
+            <div class="brand-subtitle">官方会话监控与桥接</div>
+          </div>
+          <div class="toolbar">
+            <button id="settingsButton" class="icon-button" title="设置" aria-expanded="false">⚙</button>
+            <button id="refreshButton" class="ghost">Refresh</button>
+          </div>
         </div>
-        <div class="toolbar">
-          <button id="refreshButton" class="ghost">Refresh</button>
+        <div id="statusBar" class="status-bar"></div>
+        <div id="settingsPanel" class="settings-panel" hidden>
+          <label class="toggle-row">
+            <span>自动转发</span>
+            <input id="autoForwardToggle" type="checkbox" />
+          </label>
+          <div class="keyword-grid">
+            <label class="keyword-field">
+              <span>发给 Codex</span>
+              <textarea id="codexKeywords" class="keyword-input" rows="6"></textarea>
+            </label>
+            <label class="keyword-field">
+              <span>发给 Claude</span>
+              <textarea id="claudeKeywords" class="keyword-input" rows="6"></textarea>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button id="saveKeywordsButton" class="action-button">保存关键词</button>
+            <button id="resetKeywordsButton" class="action-button secondary">恢复默认</button>
+          </div>
         </div>
       </header>
-      <section id="summary" class="summary"></section>
       <main class="monitor-layout">
         <details class="verify-panel">
           <summary class="verify-summary">
