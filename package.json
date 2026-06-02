@@ -2,7 +2,7 @@
   "name": "broker-chat-vscode",
   "displayName": "Broker Chat",
   "description": "A local VS Code broker panel for Codex and Claude Code.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "local",
   "private": true,
   "license": "MIT",
