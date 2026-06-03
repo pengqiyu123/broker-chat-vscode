@@ -52,7 +52,7 @@ Forwarding behavior:
 - Manual `merge-forward` includes adjacent user question, source answer, and optional note.
 - Automatic forwarding only uses the answer format.
 - Automatic target is determined by matched keyword group, not by blindly choosing the opposite side.
-- Automatic keywords are matched only against official `user` messages, using strict prefix matching after `trimStart()` with ASCII case-insensitivity. Do not remove internal spaces for matching.
+- Automatic keywords are matched only against official `user` messages. Broker checks the first and last 40 characters only: the head must start with a keyword, or the tail must end with a keyword after trimming common trailing punctuation. Keep ASCII case-insensitivity and do not remove internal spaces for matching.
 - If the keyword target equals the source session agent, ignore that user message; do not send back into the same official panel.
 - On first initialization, re-enable, or keyword save, the engine seeds current transcript user messages as seen so old messages do not fire.
 - A failed auto-forward should be marked failed with the real bridge error and should not loop endlessly.
@@ -69,9 +69,12 @@ Completion behavior:
 
 Bridge send behavior:
 
-- Windows bridge sending is fail-safe. Before paste and before submit, verify the foreground window is the unique VS Code window for the current workspace.
-- If foreground verification fails, restore the clipboard and surface the real error. Never send keys to an unverified foreground window.
-- Do not call official Claude/Codex focus/open commands before SendKeys. Broker only brings the current workspace VS Code window to the foreground; the user must keep the target official input focused inside that window. Calling extension focus commands can open or switch conversations.
+- Windows bridge sending is fail-safe around the proven manual-forwarding path.
+- First verify the foreground window is the unique VS Code window for the current workspace. If verification fails, surface the real error and do not write or send keys.
+- Preserve the v0.0.3 success mechanism: save clipboard, write forwarding text, call the target official extension focus command, wait briefly, then paste and submit in one SendKeys process.
+- Keep the target-specific official focus commands that reliably focus Claude Code or Codex input boxes. Do not replace them with generic VS Code window focus.
+- Do not auto-activate VS Code from the background, move the mouse pointer, or add broad fallback branches that can open the wrong conversation.
+- Always restore the clipboard after send/failure.
 
 Configuration:
 

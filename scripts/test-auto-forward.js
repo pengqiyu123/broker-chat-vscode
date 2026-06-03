@@ -238,6 +238,54 @@ async function main() {
   }
 
   {
+    const engine = new AutoForwardEngine();
+    engine.evaluate(snapshot([message("old", "user", "普通消息", 1000)], undefined), strictConfig);
+    const longBody = "这是一段很长的用户正文，用来模拟粘贴大段内容时不应该扫描中间关键词。".repeat(8);
+
+    const longMiddleKeyword = snapshot(
+      [
+        message("old", "user", "普通消息", 1000),
+        message("u8-middle", "user", `请先阅读下面内容：${longBody} 回复ClaudeCode：这个中间关键词不应触发 ${longBody}`, 2000)
+      ],
+      undefined
+    );
+    assert.equal(engine.evaluate(longMiddleKeyword, strictConfig), undefined);
+    assert.equal(engine.getState().status, "idle");
+  }
+
+  {
+    const engine = new AutoForwardEngine();
+    engine.evaluate(snapshot([message("old", "user", "普通消息", 1000)], undefined), strictConfig);
+    const longBody = "这是一段很长的用户正文，用来模拟粘贴大段内容时关键词在开头仍然有效。".repeat(8);
+
+    const longHeadKeyword = snapshot(
+      [
+        message("old", "user", "普通消息", 1000),
+        message("u8-head", "user", `回复ClaudeCode：${longBody}`, 2000)
+      ],
+      undefined
+    );
+    assert.equal(engine.evaluate(longHeadKeyword, strictConfig), undefined);
+    assert.equal(engine.getState().status, "waiting");
+  }
+
+  {
+    const engine = new AutoForwardEngine();
+    engine.evaluate(snapshot([message("old", "user", "普通消息", 1000)], undefined), strictConfig);
+    const longBody = "这是一段很长的用户正文，用来模拟粘贴大段内容时关键词放在结尾也应该有效。".repeat(8);
+
+    const longTailKeyword = snapshot(
+      [
+        message("old", "user", "普通消息", 1000),
+        message("u8-tail", "user", `${longBody}\n\n回复ClaudeCode：`, 2000)
+      ],
+      undefined
+    );
+    assert.equal(engine.evaluate(longTailKeyword, strictConfig), undefined);
+    assert.equal(engine.getState().status, "waiting");
+  }
+
+  {
     const disabledEngine = new AutoForwardEngine();
     disabledEngine.evaluate(snapshot([message("old", "user", "普通消息", 1000)], undefined), config);
     const disabledDecision = disabledEngine.evaluate(

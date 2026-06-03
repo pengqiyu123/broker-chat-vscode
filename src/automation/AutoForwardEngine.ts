@@ -7,6 +7,9 @@ import {
   OfficialMonitorSnapshot
 } from "../types";
 
+const KEYWORD_EDGE_CHARS = 40;
+const TRAILING_TRIGGER_PUNCTUATION = /[\s:：。.!！?？"'“”'‘’)\]）】]+$/u;
+
 export const DEFAULT_AUTO_FORWARD_KEYWORDS: AutoForwardKeywords = {
   codex: [
     "给Codex命令",
@@ -398,11 +401,12 @@ export function matchAutoForwardKeyword(
   text: string,
   keywords: AutoForwardKeywords
 ): { target: AgentKind; keyword: string } | undefined {
-  const normalizedText = normalizeText(text);
+  const normalizedHead = normalizeText(text).slice(0, KEYWORD_EDGE_CHARS);
+  const normalizedTail = normalizeTailText(text).slice(-KEYWORD_EDGE_CHARS);
   for (const target of ["codex", "claude"] as const) {
     for (const keyword of keywords[target]) {
-      const normalizedKeyword = normalizeText(keyword);
-      if (normalizedKeyword && normalizedText.startsWith(normalizedKeyword)) {
+      const normalizedKeyword = normalizeKeyword(keyword);
+      if (normalizedKeyword && matchesEdgeKeyword(normalizedHead, normalizedTail, normalizedKeyword)) {
         return {
           target,
           keyword
@@ -436,6 +440,26 @@ function cloneDefaultKeywords(): AutoForwardKeywords {
 
 function normalizeText(value: string): string {
   return value.trimStart().toLowerCase();
+}
+
+function normalizeTailText(value: string): string {
+  return value.trimEnd().toLowerCase();
+}
+
+function normalizeKeyword(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function matchesEdgeKeyword(headText: string, tailText: string, keyword: string): boolean {
+  if (headText.startsWith(keyword)) {
+    return true;
+  }
+
+  return trimTriggerPunctuation(tailText).endsWith(keyword);
+}
+
+function trimTriggerPunctuation(value: string): string {
+  return value.replace(TRAILING_TRIGGER_PUNCTUATION, "");
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

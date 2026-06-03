@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.5
+
+- Automatic forwarding keywords now trigger from the beginning or end of a user message, without scanning the middle of long pasted text.
+- Added regression coverage for long-message head, tail, and middle keyword matching.
+
 ## 0.0.4
 
 - Added keyword-based automatic forwarding between official Codex and Claude Code conversations.
