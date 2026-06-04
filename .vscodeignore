@@ -4,6 +4,7 @@ scripts/**
 node_modules/**
 artifacts/**
 distribute/**
+test-tools/**
 .codex-plugin/**
 Broker-Chat-*.zip
 scripts/create-release.*

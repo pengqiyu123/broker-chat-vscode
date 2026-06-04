@@ -3,5 +3,6 @@ dist/
 artifacts/
 out/
 .vscode-test/
+test-tools/
 *.vsix
 Broker-Chat-*.zip

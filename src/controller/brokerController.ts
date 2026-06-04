@@ -144,7 +144,8 @@ export class BrokerController implements vscode.Disposable {
     sessionId: string,
     messageId: string,
     mode: MonitoredBridgeMode,
-    extraText = ""
+    extraText = "",
+    trigger: "manual" | "auto-forward" = "manual"
   ): Promise<BridgeActionResult> {
     if (this.bridgeState.busy) {
       const error = "已有一条桥接发送正在进行，请稍后重试。";
@@ -221,11 +222,11 @@ export class BrokerController implements vscode.Disposable {
     };
     this.emit();
     this.logger?.info(
-      `bridge action start source=${sourceAgent} target=${target} mode=${mode} session=${sessionId} message=${messageId} chars=${promptResult.prompt.length}`
+      `bridge action start trigger=${trigger} source=${sourceAgent} target=${target} mode=${mode} session=${sessionId} message=${messageId} chars=${promptResult.prompt.length}`
     );
 
     try {
-      const result = await this.uiBridge.sendToAgent(target, promptResult.prompt);
+      const result = await this.uiBridge.sendToAgent(target, promptResult.prompt, { trigger });
       this.bridgeState = {
         busy: false,
         source: sourceAgent,
@@ -235,7 +236,7 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
-      this.logger?.info(`bridge action success source=${sourceAgent} target=${target} mode=${mode} message=${messageId}`);
+      this.logger?.info(`bridge action success trigger=${trigger} source=${sourceAgent} target=${target} mode=${mode} message=${messageId}`);
       return { ok: true, message: result, source: sourceAgent, target, mode, sessionId, messageId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -248,7 +249,7 @@ export class BrokerController implements vscode.Disposable {
         updatedAt: Date.now()
       };
       this.emit();
-      this.logger?.error(`bridge action failed source=${sourceAgent} target=${target} mode=${mode} message=${messageId}: ${message}`);
+      this.logger?.error(`bridge action failed trigger=${trigger} source=${sourceAgent} target=${target} mode=${mode} message=${messageId}: ${message}`);
       return { ok: false, error: message, source: sourceAgent, target, mode, sessionId, messageId };
     }
   }
@@ -668,7 +669,8 @@ export class BrokerController implements vscode.Disposable {
         decision.sessionId,
         decision.messageId,
         decision.mode,
-        ""
+        "",
+        "auto-forward"
       );
 
       if (result.ok) {

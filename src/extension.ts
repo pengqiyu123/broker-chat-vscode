@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { BrokerLogger } from "./automation/BrokerLogger";
+import { identifyFocusedElement } from "./automation/FocusDetector";
 import { BrokerController } from "./controller/brokerController";
 import { BrokerPanel } from "./ui/BrokerPanel";
 import { BrokerSidebarViewProvider } from "./ui/BrokerSidebarViewProvider";
@@ -53,6 +54,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand("broker.showLogs", () => {
       logger?.toggle();
+    }),
+    vscode.commands.registerCommand("broker.probeFocus", async () => {
+      logger?.show();
+      logger?.info("focus probe command start; sample in 3 seconds, click the target input now");
+      void vscode.window.showInformationMessage("Broker 将在 3 秒后采样焦点，请现在点击要检测的输入框。");
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const focus = await identifyFocusedElement();
+        logger?.info(
+          [
+            `focus probe command result identified=${focus.identifiedAgent}`,
+            `rule=${focus.rule}`,
+            `current=${focus.currentSummary}`,
+            `chain=${focus.chainSummary}`
+          ].join(" | ")
+        );
+      } catch (error) {
+        logger?.error(`focus probe command failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     })
   );
 }

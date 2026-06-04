@@ -73,6 +73,18 @@ ClaudeCode说：
 为避免误发，Broker 会在发送前确认当前前台窗口是本项目的 VS Code 窗口。如果无法确认，会显示失败状态而不是继续粘贴发送。
 Broker 会复用官方扩展的面板聚焦命令，把内容填入目标 Codex / Claude Code 输入框。
 
+## 排查
+
+如果桥接失败，可以点击顶部 `日志` 查看 `Broker Chat` 输出。
+
+命令 `Probe Broker Focus` 会在 3 秒后只读检测当前输入焦点，用于排查 Codex / Claude Code 输入框识别问题；它不会写剪贴板、不会发送内容。
+
+## 0.0.8 更新
+
+- 增加焦点诊断日志，用于对比手动转发和自动转发的聚焦结果。
+- 增加 `Probe Broker Focus` 命令，方便只读采集当前 Codex / Claude Code 输入焦点。
+- 收紧日志摘要，避免把长对话正文写入日志。
+
 ## 0.0.5 更新
 
 - 自动转发关键词现在支持放在用户消息开头或结尾，适合粘贴长内容后在末尾写 `回复ClaudeCode` / `给Codex命令`。
@@ -92,6 +104,7 @@ Broker 会复用官方扩展的面板聚焦命令，把内容填入目标 Codex 
 - `New Broker Session`
 - `Stop Active Response`
 - `Show Broker Chat Logs`
+- `Probe Broker Focus`
 
 ## 已知限制
 

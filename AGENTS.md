@@ -41,6 +41,7 @@ There is no MCP server or localhost HTTP API in this version.
 Key files:
 
 - `src/automation/AutoForwardEngine.ts` — detects keyword-triggered user messages, tracks pending replies, and returns forwarding decisions.
+- `src/automation/FocusDetector.ts` — read-only UIAutomation focus diagnostics for Codex / Claude Code input routing.
 - `src/automation/windowFocusGuard.ts` — pure foreground-window matching helpers used before Windows SendKeys.
 - `src/controller/bridgePrompt.ts` — shared prompt formatting for manual and automatic forwarding.
 - `src/controller/brokerController.ts` — coordinates monitor refresh, auto-forward decisions, bridge sends, and webview config updates.
@@ -76,6 +77,18 @@ Bridge send behavior:
 - Do not auto-activate VS Code from the background, move the mouse pointer, or add broad fallback branches that can open the wrong conversation.
 - Always restore the clipboard after send/failure.
 
+Bridge focus debugging rules learned from real UIAutomation samples:
+
+- Do not infer target focus from VS Code window titles, conversation titles, active tab labels, or `vscode.window.state.focused`; these were observed to be misleading.
+- Before changing bridge recognition/routing logic, first collect raw UIAutomation current element and parent-chain samples, then have the user label them.
+- Labeled samples from this project showed:
+  - Detector focus: current element or parent chain contains the detector webview name.
+  - Codex input focus: current element class includes `ProseMirror-focused`, and the parent chain contains `name=Codex` with `automationId=RootWebArea` or `automationId=active-frame`.
+  - ClaudeCode input focus: current element has `name=Message input`, class starting with `messageInput_`, and `controlType=ControlType.Edit`.
+- Current production behavior uses these signatures for diagnostics only: `OfficialUiBridge` logs focus state before and after official focus commands, and `broker.probeFocus` samples focus after a short delay.
+- Do not add a blocking UIAutomation guard without first preserving the proven manual forwarding path in tests and manual validation. If a guard is added later, prefer enabling it for auto-forward first.
+- Focus diagnostic logs must stay short and must not dump full conversation text or forwarded body content.
+
 Configuration:
 
 - `broker.autoForwardEnabled`: boolean, default `true`.
@@ -98,6 +111,7 @@ Use these checks for auto-forward or bridge changes:
 npm run compile
 npm run test:bridge
 npm run test:auto-forward
+npm run test:powershell
 npm audit --omit=dev
 ```
 

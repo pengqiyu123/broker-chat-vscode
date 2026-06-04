@@ -2,7 +2,7 @@
   "name": "broker-chat-vscode",
   "displayName": "Broker Chat",
   "description": "A local VS Code broker panel for Codex and Claude Code.",
-  "version": "0.0.5",
+  "version": "0.0.8",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -21,6 +21,7 @@
     "onCommand:broker.newSession",
     "onCommand:broker.stopActiveResponse",
     "onCommand:broker.showLogs",
+    "onCommand:broker.probeFocus",
     "onView:brokerChatSidebar"
   ],
   "main": "./dist/extension.js",
@@ -59,6 +60,10 @@
       {
         "command": "broker.showLogs",
         "title": "Show Broker Chat Logs"
+      },
+      {
+        "command": "broker.probeFocus",
+        "title": "Probe Broker Focus"
       }
     ],
     "configuration": {

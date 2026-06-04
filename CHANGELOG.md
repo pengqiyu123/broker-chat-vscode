@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.8
+
+- Shortened focus diagnostic summaries so logs show routing evidence without dumping long conversation text.
+
+## 0.0.7
+
+- Changed focus probe command to sample after a 3-second delay so the command palette does not steal the measured focus.
+
+## 0.0.6
+
+- Added read-only focus diagnostics for Codex and Claude Code input routing.
+- Added bridge logs that record focus state before and after official panel focus commands.
+- Added `Probe Broker Focus` command for collecting focus evidence without sending text.
+
 ## 0.0.5
 
 - Automatic forwarding keywords now trigger from the beginning or end of a user message, without scanning the middle of long pasted text.

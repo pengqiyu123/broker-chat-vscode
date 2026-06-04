@@ -1,4 +1,5 @@
 export type AgentKind = "codex" | "claude";
+export type FocusIdentifiedAgent = AgentKind | "detector" | "unknown";
 export type ChatRole = "user" | AgentKind | "system" | "approval";
 export type ReturnMode = "compact" | "full";
 export type AutoDebateRounds = 1 | 2 | 3;
@@ -7,6 +8,28 @@ export type AutoForwardStatus = "disabled" | "idle" | "waiting" | "sending" | "s
 export interface AutoForwardKeywords {
   codex: string[];
   claude: string[];
+}
+
+export interface FocusElementSnapshot {
+  name: string;
+  className: string;
+  automationId: string;
+  controlType: string;
+  frameworkId: string;
+  processId: number;
+}
+
+export interface FocusProbeResult {
+  currentElement?: FocusElementSnapshot;
+  parentChain: FocusElementSnapshot[];
+  timestamp: number;
+}
+
+export interface FocusIdentification extends FocusProbeResult {
+  identifiedAgent: FocusIdentifiedAgent;
+  rule: string;
+  currentSummary: string;
+  chainSummary: string;
 }
 
 export interface UsageSummary {

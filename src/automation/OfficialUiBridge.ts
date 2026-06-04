@@ -3,6 +3,7 @@ import { promisify } from "util";
 import * as vscode from "vscode";
 import { AgentKind } from "../types";
 import { BrokerLogger } from "./BrokerLogger";
+import { identifyFocusedElement } from "./FocusDetector";
 import { isForegroundWorkspaceWindow, WindowSnapshot } from "./windowFocusGuard";
 
 const execFileAsync = promisify(execFile);
@@ -13,12 +14,17 @@ export class OfficialUiBridge {
     private readonly logger?: BrokerLogger
   ) {}
 
-  public async sendToAgent(target: AgentKind, text: string): Promise<string> {
+  public async sendToAgent(
+    target: AgentKind,
+    text: string,
+    context: { trigger?: "manual" | "auto-forward" } = {}
+  ): Promise<string> {
     if (process.platform !== "win32") {
       throw new Error("The official UI bridge is currently implemented for Windows only.");
     }
 
-    this.logInfo(`bridge start target=${target} chars=${text.length}`);
+    const trigger = context.trigger ?? "manual";
+    this.logInfo(`bridge start trigger=${trigger} target=${target} chars=${text.length}`);
 
     // Safety: verify VS Code workspace window is the foreground window
     await this.assertForegroundWorkspaceWindow("before-bridge");
@@ -28,12 +34,14 @@ export class OfficialUiBridge {
     this.logInfo(`clipboard prepared chars=${text.length}`);
 
     try {
+      await this.logFocusProbe("before-focus", target, trigger);
       await this.focusTarget(target);
       await this.delay(this.getFocusDelay(target));
+      await this.logFocusProbe("after-focus", target, trigger);
       await this.sendKeys(["^v", this.getSubmitKeys(target, text)]);
-      this.logInfo(`bridge complete target=${target}`);
+      this.logInfo(`bridge complete trigger=${trigger} target=${target}`);
     } catch (error) {
-      this.logError(`bridge failed target=${target}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logError(`bridge failed trigger=${trigger} target=${target}: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally {
       void this.restoreClipboard(previousClipboard);
@@ -152,6 +160,27 @@ export class OfficialUiBridge {
       throw new Error(result.error || "当前前台窗口不是 Broker 所在 VS Code 工作区。");
     }
     this.logInfo(`foreground check ok stage=${stage} pid=${result.window?.pid} title="${result.window?.title ?? ""}"`);
+  }
+
+  private async logFocusProbe(stage: string, target: AgentKind, trigger: "manual" | "auto-forward"): Promise<void> {
+    try {
+      const focus = await identifyFocusedElement();
+      this.logInfo(
+        [
+          `focus probe stage=${stage}`,
+          `trigger=${trigger}`,
+          `target=${target}`,
+          `identified=${focus.identifiedAgent}`,
+          `rule=${focus.rule}`,
+          `current=${focus.currentSummary}`,
+          `chain=${focus.chainSummary}`
+        ].join(" | ")
+      );
+    } catch (error) {
+      this.logError(
+        `focus probe failed stage=${stage} trigger=${trigger} target=${target}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   private async listWindows(): Promise<WindowSnapshot[]> {
