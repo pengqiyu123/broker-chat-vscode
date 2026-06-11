@@ -94,6 +94,18 @@ export interface AutoDebateState {
   currentSourceMessageId?: string;
 }
 
+export interface DirectionalRolePrefixes {
+  claudeToCodex: string;
+  codexToClaude: string;
+}
+
+export const DEFAULT_DIRECTIONAL_ROLE_PREFIXES: DirectionalRolePrefixes = {
+  claudeToCodex:
+    "身份锁定：你是Codex，首席开发负责人，统领多智能体开发小组，负责全部代码实现。\n上级对接：ClaudeCode为本项目产品经理，只下发开发指令、验收成果、提出修改意见，你严格按照ClaudeCode的指令开发。",
+  codexToClaude:
+    "身份：你是ClaudeCode，本项目专职产品经理，统筹多智能体开发项目，不编写代码，只拆解需求、输出开发指令、验收Codex开发成果、下发整改要求。\n协作关系：Codex为首席开发主管，带队多智能体团队编码落地，严格按你的指令开发。"
+};
+
 export interface BrokerSnapshot {
   workspaceCwd?: string;
   currentTarget: AgentKind;
@@ -109,6 +121,7 @@ export interface BrokerSnapshot {
   monitor: OfficialMonitorSnapshot;
   bridge: BridgeStatus;
   autoForward: AutoForwardState;
+  directionalRolePrefixes: DirectionalRolePrefixes;
 }
 
 export interface MonitoredSession {
@@ -168,7 +181,8 @@ export interface WebviewInboundMessage {
     | "bridge-send"
     | "show-logs"
     | "toggle-auto-forward"
-    | "save-auto-forward-keywords";
+    | "save-auto-forward-keywords"
+    | "save-directional-role-prefixes";
   sourceAgent?: AgentKind;
   sessionId?: string;
   messageId?: string;
@@ -176,6 +190,7 @@ export interface WebviewInboundMessage {
   extraText?: string;
   autoForwardEnabled?: boolean;
   autoForwardKeywords?: AutoForwardKeywords;
+  directionalRolePrefixes?: DirectionalRolePrefixes;
 }
 
 export interface WebviewOutboundMessage {
@@ -215,4 +230,5 @@ export interface BrokerConfig {
   claudeAllowedTools: string[];
   autoForwardEnabled: boolean;
   autoForwardKeywords: AutoForwardKeywords;
+  directionalRolePrefixes: DirectionalRolePrefixes;
 }

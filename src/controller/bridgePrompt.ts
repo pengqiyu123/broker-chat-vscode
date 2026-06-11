@@ -1,4 +1,4 @@
-import { AgentKind, ChatMessage } from "../types";
+import { AgentKind, ChatMessage, DirectionalRolePrefixes } from "../types";
 import { otherAgent } from "../utils";
 
 export type MonitoredBridgeMode = "merge-forward" | "forward-answer";
@@ -17,11 +17,26 @@ export interface MonitoredBridgePromptFailure {
 
 export type MonitoredBridgePromptResult = MonitoredBridgePromptSuccess | MonitoredBridgePromptFailure;
 
+export function getDirectionalRolePrefix(
+  sourceAgent: AgentKind,
+  target: AgentKind,
+  prefixes: DirectionalRolePrefixes
+): string {
+  if (sourceAgent === "claude" && target === "codex") {
+    return prefixes.claudeToCodex;
+  }
+  if (sourceAgent === "codex" && target === "claude") {
+    return prefixes.codexToClaude;
+  }
+  return "";
+}
+
 export function buildBridgeAnswerPrompt(
   sourceAgent: AgentKind,
   target: AgentKind,
   text: string,
-  extraText = ""
+  extraText = "",
+  directionalPrefix = ""
 ): MonitoredBridgePromptResult {
   const trimmedText = text.trim();
   if (!trimmedText) {
@@ -36,7 +51,10 @@ export function buildBridgeAnswerPrompt(
   return {
     ok: true,
     target,
-    prompt: appendBridgeExtraText(`${sourceLabel}说：\n${trimmedText}`, extraText)
+    prompt: prependDirectionalPrefix(
+      appendBridgeExtraText(`${sourceLabel}说：\n${trimmedText}`, extraText),
+      directionalPrefix
+    )
   };
 }
 
@@ -45,7 +63,8 @@ export function buildMonitoredBridgePrompt(
   messages: ChatMessage[],
   messageIndex: number,
   mode: MonitoredBridgeMode,
-  extraText = ""
+  extraText = "",
+  directionalPrefix = ""
 ): MonitoredBridgePromptResult {
   const message = messages[messageIndex];
   const target = otherAgent(sourceAgent);
@@ -60,7 +79,7 @@ export function buildMonitoredBridgePrompt(
 
   const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
   if (mode === "forward-answer") {
-    return buildBridgeAnswerPrompt(sourceAgent, target, message.text, extraText);
+    return buildBridgeAnswerPrompt(sourceAgent, target, message.text, extraText, directionalPrefix);
   }
 
   if (!message.text.trim()) {
@@ -83,9 +102,12 @@ export function buildMonitoredBridgePrompt(
   return {
     ok: true,
     target,
-    prompt: appendBridgeExtraText(
-      `User question:\n${relatedUser.text.trim()}\n\n${sourceLabel} answer:\n${message.text.trim()}`,
-      extraText
+    prompt: prependDirectionalPrefix(
+      appendBridgeExtraText(
+        `User question:\n${relatedUser.text.trim()}\n\n${sourceLabel} answer:\n${message.text.trim()}`,
+        extraText
+      ),
+      directionalPrefix
     )
   }
 }
@@ -105,4 +127,13 @@ function appendBridgeExtraText(prompt: string, extraText: string): string {
   }
 
   return `${prompt}\n\nAdditional user note:\n${trimmedExtraText}`;
+}
+
+function prependDirectionalPrefix(prompt: string, directionalPrefix: string): string {
+  const trimmedPrefix = directionalPrefix.trim();
+  if (!trimmedPrefix) {
+    return prompt;
+  }
+
+  return `${trimmedPrefix}\n\n${prompt}`;
 }

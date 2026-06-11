@@ -7,6 +7,8 @@ import {
   BrokerConfig,
   BrokerSnapshot,
   ChatMessage,
+  DEFAULT_DIRECTIONAL_ROLE_PREFIXES,
+  DirectionalRolePrefixes,
   MessageAction,
   ReturnMode,
   UsageSummary
@@ -23,7 +25,12 @@ import {
 import { BrokerLogger } from "../automation/BrokerLogger";
 import { OfficialUiBridge } from "../automation/OfficialUiBridge";
 import { OfficialTranscriptMonitor } from "../monitor/OfficialTranscriptMonitor";
-import { buildBridgeAnswerPrompt, buildMonitoredBridgePrompt, MonitoredBridgeMode } from "./bridgePrompt";
+import {
+  buildBridgeAnswerPrompt,
+  buildMonitoredBridgePrompt,
+  getDirectionalRolePrefix,
+  MonitoredBridgeMode
+} from "./bridgePrompt";
 
 interface BridgeActionResult {
   ok: boolean;
@@ -111,7 +118,8 @@ export class BrokerController implements vscode.Disposable {
         ...this.autoForwardState,
         enabled: config.autoForwardEnabled,
         keywords: config.autoForwardKeywords
-      }
+      },
+      directionalRolePrefixes: config.directionalRolePrefixes
     };
   }
 
@@ -189,8 +197,21 @@ export class BrokerController implements vscode.Disposable {
 
     const promptResult =
       mode === "forward-answer"
-        ? buildBridgeAnswerPrompt(sourceAgent, target, session.messages[messageIndex]?.text ?? "", extraText)
-        : buildMonitoredBridgePrompt(sourceAgent, session.messages, messageIndex, mode, extraText);
+        ? buildBridgeAnswerPrompt(
+            sourceAgent,
+            target,
+            session.messages[messageIndex]?.text ?? "",
+            extraText,
+            this.getDirectionalRolePrefix(sourceAgent, target)
+          )
+        : buildMonitoredBridgePrompt(
+            sourceAgent,
+            session.messages,
+            messageIndex,
+            mode,
+            extraText,
+            this.getDirectionalRolePrefix(sourceAgent, target)
+          );
     if (!promptResult.ok) {
       this.bridgeState = {
         busy: false,
@@ -273,6 +294,14 @@ export class BrokerController implements vscode.Disposable {
       .update("autoForwardKeywords", normalizedKeywords, vscode.ConfigurationTarget.Workspace);
     this.autoForwardEngine.resetBaseline(this.monitorSnapshot, this.getConfig().autoForwardEnabled);
     this.autoForwardState = this.autoForwardEngine.getState();
+    this.emit();
+  }
+
+  public async setDirectionalRolePrefixes(prefixes: unknown): Promise<void> {
+    const normalizedPrefixes = normalizeDirectionalRolePrefixes(prefixes);
+    await vscode.workspace
+      .getConfiguration("broker")
+      .update("directionalRolePrefixes", normalizedPrefixes, vscode.ConfigurationTarget.Workspace);
     this.emit();
   }
 
@@ -718,7 +747,29 @@ export class BrokerController implements vscode.Disposable {
       autoForwardEnabled: config.get<boolean>("autoForwardEnabled", true),
       autoForwardKeywords: normalizeAutoForwardKeywords(
         config.get<unknown>("autoForwardKeywords", DEFAULT_AUTO_FORWARD_KEYWORDS)
+      ),
+      directionalRolePrefixes: normalizeDirectionalRolePrefixes(
+        config.get<unknown>("directionalRolePrefixes", DEFAULT_DIRECTIONAL_ROLE_PREFIXES)
       )
     };
   }
+
+  private getDirectionalRolePrefix(sourceAgent: AgentKind, target: AgentKind): string {
+    return getDirectionalRolePrefix(sourceAgent, target, this.getConfig().directionalRolePrefixes);
+  }
+}
+
+export function normalizeDirectionalRolePrefixes(value: unknown): DirectionalRolePrefixes {
+  if (!value || typeof value !== "object") {
+    return {
+      claudeToCodex: "",
+      codexToClaude: ""
+    };
+  }
+
+  const entry = value as Partial<Record<keyof DirectionalRolePrefixes, unknown>>;
+  return {
+    claudeToCodex: typeof entry.claudeToCodex === "string" ? entry.claudeToCodex : "",
+    codexToClaude: typeof entry.codexToClaude === "string" ? entry.codexToClaude : ""
+  };
 }

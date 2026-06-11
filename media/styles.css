@@ -231,6 +231,17 @@ body {
   gap: 8px;
 }
 
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.settings-section-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .monitor-layout {
   display: grid;
   gap: 10px;

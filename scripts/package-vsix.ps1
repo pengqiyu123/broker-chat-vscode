@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $packageJsonPath = Join-Path $projectRoot "package.json"
-$package = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+$package = Get-Content $packageJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
 $name = [string]$package.name
 $version = [string]$package.version

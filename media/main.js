@@ -36,6 +36,12 @@
       "问 Claude"
     ]
   };
+  const DEFAULT_DIRECTIONAL_ROLE_PREFIXES = {
+    claudeToCodex:
+      "身份锁定：你是Codex，首席开发负责人，统领多智能体开发小组，负责全部代码实现。\n上级对接：ClaudeCode为本项目产品经理，只下发开发指令、验收成果、提出修改意见，你严格按照ClaudeCode的指令开发。",
+    codexToClaude:
+      "身份：你是ClaudeCode，本项目专职产品经理，统筹多智能体开发项目，不编写代码，只拆解需求、输出开发指令、验收Codex开发成果、下发整改要求。\n协作关系：Codex为首席开发主管，带队多智能体团队编码落地，严格按你的指令开发。"
+  };
   const elements = {
     logsButton: document.getElementById("logsButton"),
     refreshButton: document.getElementById("refreshButton"),
@@ -48,6 +54,9 @@
     claudeKeywords: document.getElementById("claudeKeywords"),
     saveKeywordsButton: document.getElementById("saveKeywordsButton"),
     resetKeywordsButton: document.getElementById("resetKeywordsButton"),
+    claudeToCodexPrefix: document.getElementById("claudeToCodexPrefix"),
+    codexToClaudePrefix: document.getElementById("codexToClaudePrefix"),
+    saveRolePrefixesButton: document.getElementById("saveRolePrefixesButton"),
     codexSession: document.getElementById("codexSession"),
     claudeSession: document.getElementById("claudeSession"),
     codexPreview: document.getElementById("codexPreview"),
@@ -78,7 +87,8 @@
       enabled: true,
       status: "idle",
       keywords: DEFAULT_AUTO_FORWARD_KEYWORDS
-    }
+    },
+    directionalRolePrefixes: DEFAULT_DIRECTIONAL_ROLE_PREFIXES
   };
   let lastRenderSignature = "";
   let queuedSnapshot = null;
@@ -86,6 +96,7 @@
   let deferredRenderTimer = null;
   let settingsOpen = false;
   let keywordDraftTouched = false;
+  let rolePrefixDraftTouched = false;
 
   function escapeHtml(value) {
     return String(value)
@@ -133,6 +144,7 @@
       busy: nextSnapshot.busy,
       autoDebate: nextSnapshot.autoDebate,
       autoForward: nextSnapshot.autoForward,
+      directionalRolePrefixes: nextSnapshot.directionalRolePrefixes,
       bridge: stableBridge,
       monitor: {
         enabled: monitor.enabled,
@@ -375,6 +387,14 @@
       .filter(Boolean);
   }
 
+  function getDirectionalRolePrefixes() {
+    const prefixes = snapshot.directionalRolePrefixes || {};
+    return {
+      claudeToCodex: typeof prefixes.claudeToCodex === "string" ? prefixes.claudeToCodex : "",
+      codexToClaude: typeof prefixes.codexToClaude === "string" ? prefixes.codexToClaude : ""
+    };
+  }
+
   function renderStatusPill(kind, label, value, title) {
     return `<span class="status-pill ${escapeHtml(kind)}" title="${escapeHtml(title || value)}">
       <span class="status-dot"></span>
@@ -396,6 +416,16 @@
       }
       if (elements.claudeKeywords instanceof HTMLTextAreaElement) {
         elements.claudeKeywords.value = keywordsToText(keywords.claude);
+      }
+    }
+
+    if (!rolePrefixDraftTouched) {
+      const prefixes = getDirectionalRolePrefixes();
+      if (elements.claudeToCodexPrefix instanceof HTMLTextAreaElement) {
+        elements.claudeToCodexPrefix.value = prefixes.claudeToCodex;
+      }
+      if (elements.codexToClaudePrefix instanceof HTMLTextAreaElement) {
+        elements.codexToClaudePrefix.value = prefixes.codexToClaude;
       }
     }
   }
@@ -540,6 +570,24 @@
     });
   });
 
+  elements.saveRolePrefixesButton.addEventListener("click", () => {
+    const claudeToCodex = elements.claudeToCodexPrefix instanceof HTMLTextAreaElement
+      ? elements.claudeToCodexPrefix.value
+      : "";
+    const codexToClaude = elements.codexToClaudePrefix instanceof HTMLTextAreaElement
+      ? elements.codexToClaudePrefix.value
+      : "";
+
+    rolePrefixDraftTouched = false;
+    vscode.postMessage({
+      type: "save-directional-role-prefixes",
+      directionalRolePrefixes: {
+        claudeToCodex,
+        codexToClaude
+      }
+    });
+  });
+
   document.body.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-bridge-send='true']") : null;
     if (!button) {
@@ -567,7 +615,9 @@
     }
 
     if (!target.classList.contains("bridge-note-input")) {
-      if (target.classList.contains("keyword-input")) {
+      if (target.classList.contains("role-prefix-input")) {
+        rolePrefixDraftTouched = true;
+      } else if (target.classList.contains("keyword-input")) {
         keywordDraftTouched = true;
       }
       return;

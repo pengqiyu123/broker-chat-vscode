@@ -7,7 +7,7 @@ if (-not (Test-Path $packageJsonPath)) {
   throw "package.json not found: $packageJsonPath"
 }
 
-$package = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+$package = Get-Content $packageJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $publisher = [string]$package.publisher
 $name = [string]$package.name
 $version = [string]$package.version

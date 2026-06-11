@@ -62,6 +62,9 @@ export class BrokerWebviewConnection implements vscode.Disposable {
       case "save-auto-forward-keywords":
         await this.controller.setAutoForwardKeywords(message.autoForwardKeywords);
         return;
+      case "save-directional-role-prefixes":
+        await this.controller.setDirectionalRolePrefixes(message.directionalRolePrefixes);
+        return;
       default:
         return;
     }
@@ -119,6 +122,22 @@ export class BrokerWebviewConnection implements vscode.Disposable {
           <div class="settings-actions">
             <button id="saveKeywordsButton" class="action-button">保存关键词</button>
             <button id="resetKeywordsButton" class="action-button secondary">恢复默认</button>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-section-title">身份前缀</div>
+          <div class="section-note">每次跨模型转发时自动拼在正文最前面；清空即关闭。</div>
+          <div class="keyword-grid">
+            <label class="keyword-field">
+              <span>ClaudeCode -> Codex</span>
+              <textarea id="claudeToCodexPrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
+            </label>
+            <label class="keyword-field">
+              <span>Codex -> ClaudeCode</span>
+              <textarea id="codexToClaudePrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button id="saveRolePrefixesButton" class="action-button">保存身份前缀</button>
           </div>
         </div>
       </header>

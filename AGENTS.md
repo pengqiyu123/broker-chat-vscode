@@ -52,6 +52,7 @@ Forwarding behavior:
 - Manual `forward-answer` format is `Codex说：...` or `ClaudeCode说：...`.
 - Manual `merge-forward` includes adjacent user question, source answer, and optional note.
 - Automatic forwarding only uses the answer format.
+- Optional directional role prefixes are prepended before the existing bridge prompt. They ship with user-approved role-locking defaults, and empty saved prefixes must preserve the v0.0.8 prompt output exactly.
 - Automatic target is determined by matched keyword group, not by blindly choosing the opposite side.
 - Automatic keywords are matched only against official `user` messages. Broker checks the first and last 40 characters only: the head must start with a keyword, or the tail must end with a keyword after trimming common trailing punctuation. Keep ASCII case-insensitivity and do not remove internal spaces for matching.
 - If the keyword target equals the source session agent, ignore that user message; do not send back into the same official panel.
@@ -93,6 +94,7 @@ Configuration:
 
 - `broker.autoForwardEnabled`: boolean, default `true`.
 - `broker.autoForwardKeywords`: object `{ codex: string[], claude: string[] }`.
+- `broker.directionalRolePrefixes`: object `{ claudeToCodex: string, codexToClaude: string }`, default role-locking text that the user may clear.
 - Webview settings write to workspace configuration.
 
 ## Development Notes

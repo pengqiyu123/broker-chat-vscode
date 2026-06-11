@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0
+
+- Added editable directional role prefixes for ClaudeCode -> Codex and Codex -> ClaudeCode forwarding.
+- Preloaded the directional role prefix fields with the approved ClaudeCode/Codex identity-locking text.
+- Prepends configured role text to manual and automatic bridge prompts while preserving old output when a prefix is cleared.
+- Fixed local PowerShell packaging/install scripts to read UTF-8 package metadata correctly.
+
+## 0.0.9
+
+- Added editable directional role prefixes for ClaudeCode -> Codex and Codex -> ClaudeCode forwarding.
+- Prepends configured role text to manual and automatic bridge prompts while preserving old output when prefixes are empty.
+
 ## 0.0.8
 
 - Shortened focus diagnostic summaries so logs show routing evidence without dumping long conversation text.
