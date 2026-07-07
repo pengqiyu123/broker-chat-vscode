@@ -1,4 +1,4 @@
-export type AgentKind = "codex" | "claude";
+export type AgentKind = "codex" | "claude" | "zcode";
 export type FocusIdentifiedAgent = AgentKind | "detector" | "unknown";
 export type ChatRole = "user" | AgentKind | "system" | "approval";
 export type ReturnMode = "compact" | "full";
@@ -55,7 +55,7 @@ export interface MessageAction {
 }
 
 export interface ApprovalState {
-  agent: "codex";
+  agent: AgentKind;
   requestId: string;
   method: string;
   title: string;
@@ -95,21 +95,49 @@ export interface AutoDebateState {
 }
 
 export interface DirectionalRolePrefixes {
-  claudeToCodex: string;
-  codexToClaude: string;
+  red: string;
+  blue: string;
 }
 
 export const DEFAULT_DIRECTIONAL_ROLE_PREFIXES: DirectionalRolePrefixes = {
-  claudeToCodex:
-    "身份锁定：你是Codex，首席开发负责人，统领多智能体开发小组，负责全部代码实现。\n上级对接：ClaudeCode为本项目产品经理，只下发开发指令、验收成果、提出修改意见，你严格按照ClaudeCode的指令开发。",
-  codexToClaude:
-    "身份：你是ClaudeCode，本项目专职产品经理，统筹多智能体开发项目，不编写代码，只拆解需求、输出开发指令、验收Codex开发成果、下发整改要求。\n协作关系：Codex为首席开发主管，带队多智能体团队编码落地，严格按你的指令开发。"
+  red:
+    "身份：你是ClaudeCode，本项目专职产品经理，统筹多智能体开发项目，不编写代码，只拆解需求、输出开发指令、验收Codex开发成果、下发整改要求。\n协作关系：Codex为首席开发主管，带队多智能体团队编码落地，严格按你的指令开发。",
+  blue:
+    "身份锁定：你是Codex，首席开发负责人，统领多智能体开发小组，负责全部代码实现。\n上级对接：ClaudeCode为本项目产品经理，只下发开发指令、验收成果、提出修改意见，你严格按照ClaudeCode的指令开发。"
 };
+
+export type AgentSelection = AgentKind | null;
+
+export interface BridgePairState {
+  red: AgentSelection;
+  blue: AgentSelection;
+}
+
+export interface BridgePairCheck {
+  red?: string;
+  blue?: string;
+}
+
+// 桥接端状态灯：none=未选 / red=不可用(如 ZCode 没开) / yellow=就绪中(如重启 9224) / green=可用
+export type PairSlotStatus = "none" | "red" | "yellow" | "green";
+
+export interface BridgePairStatus {
+  red?: PairSlotStatus;
+  blue?: PairSlotStatus;
+}
+
+export interface ZCodeConfig {
+  dataDir: string;
+  exePath?: string;
+}
 
 export interface BrokerSnapshot {
   workspaceCwd?: string;
   currentTarget: AgentKind;
   busy: boolean;
+  pair: BridgePairState;
+  pairCheck: BridgePairCheck;
+  pairStatus: BridgePairStatus;
   autoDebate: {
     active: boolean;
     rounds: AutoDebateRounds;
@@ -122,6 +150,7 @@ export interface BrokerSnapshot {
   bridge: BridgeStatus;
   autoForward: AutoForwardState;
   directionalRolePrefixes: DirectionalRolePrefixes;
+  zcodeDataDir?: string;
 }
 
 export interface MonitoredSession {
@@ -140,8 +169,10 @@ export interface OfficialMonitorSnapshot {
   lastUpdated: number;
   codex?: MonitoredSession;
   claude?: MonitoredSession;
+  zcode?: MonitoredSession;
   codexError?: string;
   claudeError?: string;
+  zcodeError?: string;
 }
 
 export interface PreferredMonitorSession {
@@ -182,7 +213,10 @@ export interface WebviewInboundMessage {
     | "show-logs"
     | "toggle-auto-forward"
     | "save-auto-forward-keywords"
-    | "save-directional-role-prefixes";
+    | "save-directional-role-prefixes"
+    | "set-bridge-pair"
+    | "save-zcode-config"
+    | "recheck-zcode";
   sourceAgent?: AgentKind;
   sessionId?: string;
   messageId?: string;
@@ -191,6 +225,8 @@ export interface WebviewInboundMessage {
   autoForwardEnabled?: boolean;
   autoForwardKeywords?: AutoForwardKeywords;
   directionalRolePrefixes?: DirectionalRolePrefixes;
+  pair?: BridgePairState;
+  zcodeDataDir?: string;
 }
 
 export interface WebviewOutboundMessage {
@@ -224,6 +260,7 @@ export interface AgentAdapter {
 export interface BrokerConfig {
   codexPath: string;
   claudePath: string;
+  zcode: ZCodeConfig;
   defaultReturnMode: ReturnMode;
   defaultAutoDebateRounds: AutoDebateRounds;
   claudePermissionMode: string;

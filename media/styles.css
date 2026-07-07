@@ -10,6 +10,10 @@
   --claude: #f29f43;
   --user: #7aa2ff;
   --thinking: #8b9bb7;
+  /* 红蓝白桥接角色色 */
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --white: #e5eefc;
 }
 
 * {
@@ -177,10 +181,55 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.72);
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
 }
 
 .settings-panel[hidden] {
   display: none;
+}
+
+/* 设置面板的可折叠分区（复用 verify-panel 的 details 折叠模式） */
+.settings-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.settings-section-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-section[open] .verify-chevron {
+  transform: rotate(90deg);
+}
+
+.verify-chevron {
+  display: inline-block;
+  font-size: 14px;
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+
+.settings-section-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings-section-title.small {
+  font-size: 12px;
+  margin-bottom: 0;
 }
 
 .toggle-row {
@@ -211,6 +260,59 @@ body {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+/* 红蓝下拉框：label 与 select 同行 */
+.agent-field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-field-inline span {
+  white-space: nowrap;
+}
+
+.agent-select {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 12, 0.42);
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* 单行输入框（区别于多行 keyword-input 的 124px 高） */
+.single-line-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 12, 0.42);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* 设置面板指示灯行 */
+.pair-check-slot {
+  display: inline-block;
+}
+
+.pair-check-slot[data-recheck="zcode"] {
+  cursor: pointer;
+}
+
+.pair-check-slot[data-recheck="zcode"]:hover {
+  text-decoration: underline;
 }
 
 .keyword-input {
@@ -390,16 +492,17 @@ body {
   padding: 10px 12px;
 }
 
-.message.role-user {
-  border-left: 4px solid var(--user);
+/* 红蓝白角色色：颜色由前端按 pair 动态加 slot class，不绑死具体 agent */
+.message.slot-user {
+  border-left: 4px solid var(--white);
 }
 
-.message.role-codex {
-  border-left: 4px solid var(--codex);
+.message.slot-red {
+  border-left: 4px solid var(--red);
 }
 
-.message.role-claude {
-  border-left: 4px solid var(--claude);
+.message.slot-blue {
+  border-left: 4px solid var(--blue);
 }
 
 .message-header {
@@ -431,20 +534,61 @@ body {
   border: 1px solid var(--border);
 }
 
-.origin-chip.codex {
-  border-color: rgba(35, 199, 182, 0.35);
-  color: var(--codex);
-  background: rgba(35, 199, 182, 0.1);
+.origin-chip.slot-red {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.1);
 }
 
-.origin-chip.claude {
-  border-color: rgba(242, 159, 67, 0.35);
-  color: var(--claude);
-  background: rgba(242, 159, 67, 0.1);
+.origin-chip.slot-blue {
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--blue);
+  background: rgba(59, 130, 246, 0.1);
 }
 
-.message-text,
-.thinking-text {
+.origin-chip.slot-user {
+  border-color: rgba(229, 238, 252, 0.3);
+  color: var(--white);
+  background: rgba(229, 238, 252, 0.08);
+}
+
+/* 过程卡：tool-calls 中间步骤合并，默认折叠 */
+.process-card {
+  padding: 6px 10px;
+  opacity: 0.78;
+}
+
+.process-card > details > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  padding: 2px 0;
+}
+
+.process-card > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.process-card > details > summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.process-card > details[open] > summary::before {
+  content: "▾ ";
+}
+
+.process-body {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.message-text,.thinking-text {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;

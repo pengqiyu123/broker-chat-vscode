@@ -28,23 +28,40 @@ interface CodexRawMessage extends Omit<ChatMessage, "id"> {
   meta: Record<string, string | number | boolean>;
 }
 
+export type ZCodeSessionReader = (workspaceCwd: string) => Promise<MonitoredSession | undefined>;
+
 export class OfficialTranscriptMonitor {
-  public constructor(private readonly workspaceCwd: string) {}
+  public constructor(
+    private readonly workspaceCwd: string,
+    private readonly zcodeReader?: ZCodeSessionReader
+  ) {}
 
   public async readSnapshot(preferredSession?: PreferredMonitorSession): Promise<OfficialMonitorSnapshot> {
-    const [codexResult, claudeResult] = await Promise.allSettled([
+    const tasks: Array<Promise<MonitoredSession | undefined>> = [
       this.readCodexSession(this.workspaceCwd, preferredSession?.agent === "codex" ? preferredSession : undefined),
-      this.readClaudeSession(this.workspaceCwd)
-    ]);
+      this.readClaudeSession(this.workspaceCwd),
+      this.readZCodeSession(this.workspaceCwd)
+    ];
+
+    const [codexResult, claudeResult, zcodeResult] = await Promise.allSettled(tasks);
 
     return {
       enabled: true,
       lastUpdated: Date.now(),
       codex: codexResult.status === "fulfilled" ? codexResult.value : undefined,
       claude: claudeResult.status === "fulfilled" ? claudeResult.value : undefined,
+      zcode: zcodeResult.status === "fulfilled" ? zcodeResult.value : undefined,
       codexError: codexResult.status === "rejected" ? this.toErrorMessage(codexResult.reason) : undefined,
-      claudeError: claudeResult.status === "rejected" ? this.toErrorMessage(claudeResult.reason) : undefined
+      claudeError: claudeResult.status === "rejected" ? this.toErrorMessage(claudeResult.reason) : undefined,
+      zcodeError: zcodeResult.status === "rejected" ? this.toErrorMessage(zcodeResult.reason) : undefined
     };
+  }
+
+  private async readZCodeSession(workspaceCwd: string): Promise<MonitoredSession | undefined> {
+    if (!this.zcodeReader) {
+      return undefined;
+    }
+    return this.zcodeReader(workspaceCwd);
   }
 
   public async parseCodexSessionForTest(

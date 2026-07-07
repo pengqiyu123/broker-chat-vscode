@@ -37,7 +37,7 @@ export class BrokerWebviewConnection implements vscode.Disposable {
         return;
       case "bridge-send":
         if (
-          (message.sourceAgent === "codex" || message.sourceAgent === "claude") &&
+          (message.sourceAgent === "codex" || message.sourceAgent === "claude" || message.sourceAgent === "zcode") &&
           typeof message.sessionId === "string" &&
           typeof message.messageId === "string" &&
           (message.mode === "merge-forward" || message.mode === "forward-answer")
@@ -64,6 +64,19 @@ export class BrokerWebviewConnection implements vscode.Disposable {
         return;
       case "save-directional-role-prefixes":
         await this.controller.setDirectionalRolePrefixes(message.directionalRolePrefixes);
+        return;
+      case "set-bridge-pair":
+        if (message.pair) {
+          await this.controller.setBridgePair(message.pair.red ?? null, message.pair.blue ?? null);
+        }
+        return;
+      case "save-zcode-config":
+        if (typeof message.zcodeDataDir === "string") {
+          await this.controller.setZcodeDataDir(message.zcodeDataDir);
+        }
+        return;
+      case "recheck-zcode":
+        await this.controller.recheckZcode();
         return;
       default:
         return;
@@ -105,40 +118,96 @@ export class BrokerWebviewConnection implements vscode.Disposable {
         <div id="statusBar" class="status-bar"></div>
         <div id="statusDetail" class="status-detail"></div>
         <div id="settingsPanel" class="settings-panel" hidden>
-          <label class="toggle-row">
-            <span>自动转发</span>
-            <input id="autoForwardToggle" type="checkbox" />
-          </label>
-          <div class="keyword-grid">
-            <label class="keyword-field">
-              <span>发给 Codex</span>
-              <textarea id="codexKeywords" class="keyword-input" rows="6"></textarea>
-            </label>
-            <label class="keyword-field">
-              <span>发给 Claude</span>
-              <textarea id="claudeKeywords" class="keyword-input" rows="6"></textarea>
-            </label>
-          </div>
-          <div class="settings-actions">
-            <button id="saveKeywordsButton" class="action-button">保存关键词</button>
-            <button id="resetKeywordsButton" class="action-button secondary">恢复默认</button>
-          </div>
-          <div class="settings-divider"></div>
-          <div class="settings-section-title">身份前缀</div>
-          <div class="section-note">每次跨模型转发时自动拼在正文最前面；清空即关闭。</div>
-          <div class="keyword-grid">
-            <label class="keyword-field">
-              <span>ClaudeCode -> Codex</span>
-              <textarea id="claudeToCodexPrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
-            </label>
-            <label class="keyword-field">
-              <span>Codex -> ClaudeCode</span>
-              <textarea id="codexToClaudePrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
-            </label>
-          </div>
-          <div class="settings-actions">
-            <button id="saveRolePrefixesButton" class="action-button">保存身份前缀</button>
-          </div>
+          <details class="settings-section" open>
+            <summary class="settings-section-summary">
+              <span class="settings-section-title">桥接对象（红蓝双方）</span>
+              <span class="verify-chevron">▸</span>
+            </summary>
+            <div class="settings-section-body">
+              <div class="section-note">选择两个 agent 组成桥接对，你（白方）在中间转发。切换后自动检测，检测失败的一端会清空。</div>
+              <div class="keyword-grid">
+                <label class="agent-field-inline">
+                  <span>红方</span>
+                  <select id="redAgent" class="agent-select">
+                    <option value="">未选择</option>
+                    <option value="claude">Claude</option>
+                    <option value="codex">Codex</option>
+                    <option value="zcode">ZCode</option>
+                  </select>
+                </label>
+                <label class="agent-field-inline">
+                  <span>蓝方</span>
+                  <select id="blueAgent" class="agent-select">
+                    <option value="">未选择</option>
+                    <option value="claude">Claude</option>
+                    <option value="codex">Codex</option>
+                    <option value="zcode">ZCode</option>
+                  </select>
+                </label>
+              </div>
+              <div id="pairCheckRow" class="pair-check-row"></div>
+              <div class="settings-divider"></div>
+              <div class="settings-section-title small">ZCode 数据目录</div>
+              <div class="section-note">ZCode 桌面应用的数据根目录（其下 .zcode/v2/config.json 存放 provider 配置）。留空则禁用 ZCode。</div>
+              <label class="keyword-field">
+                <input id="zcodeDataDir" class="single-line-input" type="text" placeholder="例如：D:\\APP\\.zcode" />
+              </label>
+              <div class="settings-actions">
+                <button id="saveZcodeButton" class="action-button">保存 ZCode 配置</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-section">
+            <summary class="settings-section-summary">
+              <span class="settings-section-title">身份前缀（红蓝槽）</span>
+              <span class="verify-chevron">▸</span>
+            </summary>
+            <div class="settings-section-body">
+              <div class="section-note">转发给某一方时，自动把该方的身份锁前缀拼在正文最前面；清空即关闭。不随桥接对象切换变化。</div>
+              <div class="keyword-grid">
+                <label class="keyword-field">
+                  <span>红方身份前缀</span>
+                  <textarea id="redPrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
+                </label>
+                <label class="keyword-field">
+                  <span>蓝方身份前缀</span>
+                  <textarea id="bluePrefix" class="keyword-input role-prefix-input" rows="5"></textarea>
+                </label>
+              </div>
+              <div class="settings-actions">
+                <button id="saveRolePrefixesButton" class="action-button">保存身份前缀</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-section">
+            <summary class="settings-section-summary">
+              <span class="settings-section-title">自动转发</span>
+              <span class="verify-chevron">▸</span>
+            </summary>
+            <div class="settings-section-body">
+              <label class="toggle-row">
+                <span>启用自动转发</span>
+                <input id="autoForwardToggle" type="checkbox" />
+              </label>
+              <div class="section-note">检测到关键词的用户消息时，自动把回复转发给对应一方。仅对 Codex/Claude 生效。</div>
+              <div class="keyword-grid">
+                <label class="keyword-field">
+                  <span>发给蓝方</span>
+                  <textarea id="claudeKeywords" class="keyword-input" rows="6"></textarea>
+                </label>
+                <label class="keyword-field">
+                  <span>发给红方</span>
+                  <textarea id="codexKeywords" class="keyword-input" rows="6"></textarea>
+                </label>
+              </div>
+              <div class="settings-actions">
+                <button id="saveKeywordsButton" class="action-button">保存关键词</button>
+                <button id="resetKeywordsButton" class="action-button secondary">恢复默认</button>
+              </div>
+            </div>
+          </details>
         </div>
       </header>
       <main class="monitor-layout">

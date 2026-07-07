@@ -1,7 +1,16 @@
 import { AgentKind, ChatMessage, DirectionalRolePrefixes } from "../types";
-import { otherAgent } from "../utils";
 
 export type MonitoredBridgeMode = "merge-forward" | "forward-answer";
+
+function agentLabel(agent: AgentKind): string {
+  if (agent === "codex") {
+    return "Codex";
+  }
+  if (agent === "claude") {
+    return "ClaudeCode";
+  }
+  return "ZCode";
+}
 
 export interface MonitoredBridgePromptSuccess {
   ok: true;
@@ -17,17 +26,13 @@ export interface MonitoredBridgePromptFailure {
 
 export type MonitoredBridgePromptResult = MonitoredBridgePromptSuccess | MonitoredBridgePromptFailure;
 
+// 前缀选择已由 controller 按 pair 红蓝槽位完成（red 前缀=红方身份锁，blue 前缀=蓝方身份锁）。
+// 此函数保留导出以兼容测试脚本，但不再做方向推断；返回空，真正的前缀由调用方传入 directionalPrefix。
 export function getDirectionalRolePrefix(
-  sourceAgent: AgentKind,
-  target: AgentKind,
-  prefixes: DirectionalRolePrefixes
+  _sourceAgent: AgentKind,
+  _target: AgentKind,
+  _prefixes: DirectionalRolePrefixes
 ): string {
-  if (sourceAgent === "claude" && target === "codex") {
-    return prefixes.claudeToCodex;
-  }
-  if (sourceAgent === "codex" && target === "claude") {
-    return prefixes.codexToClaude;
-  }
   return "";
 }
 
@@ -47,7 +52,7 @@ export function buildBridgeAnswerPrompt(
     };
   }
 
-  const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
+  const sourceLabel = agentLabel(sourceAgent);
   return {
     ok: true,
     target,
@@ -60,6 +65,7 @@ export function buildBridgeAnswerPrompt(
 
 export function buildMonitoredBridgePrompt(
   sourceAgent: AgentKind,
+  target: AgentKind,
   messages: ChatMessage[],
   messageIndex: number,
   mode: MonitoredBridgeMode,
@@ -67,7 +73,6 @@ export function buildMonitoredBridgePrompt(
   directionalPrefix = ""
 ): MonitoredBridgePromptResult {
   const message = messages[messageIndex];
-  const target = otherAgent(sourceAgent);
 
   if (!message || message.role !== sourceAgent) {
     return {
@@ -77,7 +82,7 @@ export function buildMonitoredBridgePrompt(
     };
   }
 
-  const sourceLabel = sourceAgent === "codex" ? "Codex" : "ClaudeCode";
+  const sourceLabel = agentLabel(sourceAgent);
   if (mode === "forward-answer") {
     return buildBridgeAnswerPrompt(sourceAgent, target, message.text, extraText, directionalPrefix);
   }
