@@ -13,6 +13,7 @@ export interface WindowSelectionResult {
 }
 
 const VSCODE_PROCESS_NAMES = new Set(["code", "code - insiders", "vscodium"]);
+export type ForegroundWindowIdentity = number | WindowSnapshot | undefined;
 
 export function selectUniqueWorkspaceWindow(
   windows: WindowSnapshot[],
@@ -37,9 +38,10 @@ export function selectUniqueWorkspaceWindow(
 
 export function isForegroundWorkspaceWindow(
   windows: WindowSnapshot[],
-  foregroundPid: number | undefined,
+  foreground: ForegroundWindowIdentity,
   workspaceCwd: string
 ): WindowSelectionResult {
+  const foregroundPid = getForegroundPid(foreground);
   if (!foregroundPid) {
     return { ok: false, error: "无法识别当前前台窗口。" };
   }
@@ -49,14 +51,18 @@ export function isForegroundWorkspaceWindow(
     return selected;
   }
 
-  if (selected.window.pid !== foregroundPid) {
-    return {
-      ok: false,
-      error: `当前前台窗口不是 ${getWorkspaceName(workspaceCwd)} 的 VS Code 窗口。`
-    };
+  if (selected.window.pid === foregroundPid) {
+    return selected;
   }
 
-  return selected;
+  if (isWindowSnapshot(foreground) && sameWorkspaceVsCodeWindow(foreground, workspaceCwd)) {
+    return { ok: true, window: foreground };
+  }
+
+  return {
+    ok: false,
+    error: `当前前台窗口不是 ${getWorkspaceName(workspaceCwd)} 的 VS Code 窗口。`
+  };
 }
 
 function isVsCodeWindow(window: WindowSnapshot): boolean {
@@ -75,4 +81,35 @@ function titleMatchesWorkspace(title: string, workspaceName: string): boolean {
 function getWorkspaceName(workspaceCwd: string): string {
   const normalized = workspaceCwd.replace(/[\\/]+$/, "");
   return path.basename(normalized);
+}
+
+function sameWorkspaceVsCodeWindow(window: WindowSnapshot, workspaceCwd: string): boolean {
+  const workspaceName = getWorkspaceName(workspaceCwd);
+  return Boolean(workspaceName) && isVsCodeWindow(window) && titleMatchesWorkspace(window.title, workspaceName);
+}
+
+function getForegroundPid(foreground: ForegroundWindowIdentity): number | undefined {
+  if (typeof foreground === "number") {
+    return foreground;
+  }
+
+  if (isWindowSnapshot(foreground)) {
+    return foreground.pid;
+  }
+
+  return undefined;
+}
+
+function isWindowSnapshot(value: unknown): value is WindowSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.pid === "number" &&
+    typeof record.processName === "string" &&
+    typeof record.title === "string" &&
+    Number.isFinite(record.pid)
+  );
 }
