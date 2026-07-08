@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+本次更新新增 Agent 调用式转发的 MCP 入口，让 ZCode / ClaudeCode / Codex 可以通过标准 MCP 工具向 Broker 发起一次明确转发请求。
+
+### 新增
+
+- **Broker MCP sidecar**：新增 `dist/mcp/brokerMcpServer.js`，提供 stdio MCP 工具 `broker_forward`。
+- **本地控制端点**：扩展启动后在 `127.0.0.1` 随机端口开启受控接口，并写入 `.broker-chat/runtime.json`，sidecar 通过 token 和 workspace 指纹连接当前 VS Code 工作区。
+- **Agent 调用式转发入口**：新增 `agent-command` 触发源，MCP 调用进入 Broker 后复用现有三端 `dispatchBridge` 发送通道。
+- **MCP 配置样例命令**：新增 `Show Broker MCP Config` 命令，生成当前工作区可用的 ZCode MCP 配置样例。
+
+### 安全与稳定
+
+- MCP sidecar 的来源 Agent 由启动参数 `--source` 决定，模型参数不能冒充来源。
+- 每次转发需要 `requestId`，Broker 按来源会话去重，避免重复执行同一调用。
+- 控制端点校验 token、workspace 指纹、当前红蓝配对、目标 Agent、正文长度和 requestId 格式。
+- Codex / ClaudeCode 目标仍沿用现有前台 VS Code 工作区安全检查；失败会返回真实错误，不伪装成功。
+- ZCode 目标发送改为绑定桌面当前打开会话：发送前读取 CDP 当前 `sessionId`，用 app-server 验证它属于当前 VS Code 工作区，建立同一会话的回复基线后才注入文本。
+- ZCode 当前对话识别改为读取左侧项目树的 `data-task-item-key="<workspacePath>:<sessionId>"`，可区分同一 IDE 内不同文件夹项目下的历史对话。
+- ZCode 桥接发送阶段的真实错误会向外抛出，不再因为回调被忽略而显示假成功。
+
 ## 0.2.0
 
 本次更新新增 ZCode 作为第三个桥接端点，并重构桥接模型为「红蓝白双方」配对。

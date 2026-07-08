@@ -23,18 +23,6 @@ Push-Location $projectRoot
 try {
   npm run compile | Out-Host
 
-  $staleDistDirs = @(
-    "dist\mcp",
-    "dist\server"
-  )
-
-  foreach ($relativePath in $staleDistDirs) {
-    $stalePath = Join-Path $projectRoot $relativePath
-    if (Test-Path $stalePath) {
-      Remove-Item -LiteralPath $stalePath -Recurse -Force
-    }
-  }
-
   Write-Host "Packaging VSIX..."
   & $vscePath package --allow-missing-repository --out $outputFile | Out-Host
 } finally {

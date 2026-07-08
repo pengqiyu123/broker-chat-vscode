@@ -50,8 +50,9 @@ Manual bridging no longer assumes Claude↔Codex. The user picks two agents (red
 - After a pair change, `checkPair()` auto-detects both ends: codex/claude check `vscode.commands.getCommands()` for the official focus command; zcode discovers the running `ZCode.exe` process + verifies CDP port 9224 (auto-restarts ZCode with `--remote-debugging-port=9224` if not reachable) + app-server `session/list`. A failing end is cleared to `null`.
 - ZCode exe path is **auto-discovered** from the running process command line (`Get-CimInstance Win32_Process`), never persisted. ZCode data dir comes from `broker.zcodeDataDir` setting.
 - `ZCodeAdapter` is instantiated lazily — only when zcode is in the pair AND passes the check. The monitor's zcode reader reuses the same adapter instance via `readZCodeMonitoredSession` injection; it returns `undefined` (not an error) when zcode is not in the pair or unconfigured.
+- ZCode session identity is anchored to the **desktop UI's active conversation**, not the newest app-server session. Use CDP to read `[data-testid="chat-view"][data-session-id]`, then verify that session's `workspace.workspacePath` / `workspace.workspaceKey` matches the current VS Code workspace before reading or sending.
 - `AutoForwardEngine` is **unchanged** and codex/claude-only. ZCode is not part of automatic keyword forwarding. The engine reads `snapshot.monitor.zcode` harmlessly (ignores it).
-- The ZCode adapter's reply poll establishes a baseline `session/resume` message count right before CDP inject, so only post-send assistant deltas stream via `onTextDelta`; `info.finish === "stop"` on the last assistant message triggers `onComplete`.
+- The ZCode adapter's reply poll establishes a baseline `session/resume` message count for the same active `sessionId` right before CDP inject. `cdpSendToZCodeInput` receives `expectedSessionId` and must fail if the UI changes underneath it, so only post-send assistant deltas from the intended old conversation stream via `onTextDelta`; `info.finish === "stop"` on the last assistant message triggers `onComplete`.
 - Directional role prefixes were migrated from `claudeToCodex`/`codexToClaude` to **red/blue slots** (`DirectionalRolePrefixes = {red, blue}`). The original two paragraphs of identity-locking text are preserved verbatim (red = "你是ClaudeCode…", blue = "你是Codex…"). When forwarding into red, the red prefix is prepended; into blue, the blue prefix. `normalizeDirectionalRolePrefixes` still migrates old-format saved values.
 
 ## Phase 1: ZCode third endpoint (implemented)
@@ -66,13 +67,15 @@ Manual bridging no longer assumes Claude↔Codex. The user picks two agents (red
   1. Write text: `document.querySelector('[data-testid="chat-input"]').textContent = ...` + dispatch an `InputEvent('input', {inputType:'insertText', ...})`. React accepts this.
   2. Submit: click the form's last button (aria-label "加入队列" when input is non-empty) — this triggers the agent loop and the AI actually replies. Submit success = input box auto-clears.
 - `ZCodeCdpClient` (`src/adapters/ZCodeCdpClient.ts`) implements this. `cdpSendToZCodeInput(text)` does inject+submit; `isCdpReachable()` checks port 9224.
+- CDP send must be session-bound. Before writing, read the active chat view's `data-session-id`; before submitting, verify it still equals the expected target session. Do not treat "message appeared in some other/new ZCode conversation" as success.
 - **Broker auto-restarts ZCode with the debug port** (`BrokerController.restartZcodeWithDebugPort`): `taskkill /IM ZCode.exe /F` → `spawn(<exe>, ['--remote-debugging-port=9224'])` → poll `isCdpReachable()` up to 15s. Triggered from `checkZcodeAvailable` when CDP is not reachable.
 
 ### Read channel — app-server (still valid)
 
 The app-server stdio protocol is still used for **reading** (it works fine for that; only `session/send` is broken). Keep `ZCodeRpcClient` for monitor reads:
 - Launch: `ELECTRON_RUN_AS_NODE=1 <ZCode.exe> <resources/glm/zcode.cjs> app-server --stdio`. Rejects `jsonrpc` field; request shape `{id, method, params}`.
-- `session/list` → `{sessions: [...]}` (NOT a bare array). Filter client-side by `workspace.workspacePath`. Sessions are global, not per-project.
+- `session/list` → `{sessions: [...]}` (NOT a bare array). Filter client-side by `workspace.workspacePath` / `workspace.workspaceKey`. Sessions are global, not per-project. Do not fall back to a global latest session when the current workspace has no match.
+- For ZCode monitor reads, prefer the CDP active session and verify its workspace before `session/resume`; this keeps ZCode->Codex MCP calls bound to the conversation the user is actually looking at.
 - `session/resume` reads any session history (NOT `session/read`, which only works on active sessions and errors "Session is not active" otherwise). Messages have `parts[].text` (not `content`); `info.role` is user/assistant; `info.time.created` is the timestamp; `info.finish === "stop"` is final.
 - **Harness noise filter**: ZCode injects framework messages (e.g. "The TodoWrite tool hasn't been used...") as user/assistant messages. `isZCodeHarnessNoise(text)` drops any message whose text **starts with** a known harness prefix. Use startswith, not contains, to avoid killing real messages that quote the template.
 
@@ -84,6 +87,41 @@ ZCode emits N assistant messages per turn (many `tool-calls` steps + one `stop` 
 
 Provider config (`<zcode data dir>\.zcode\v2\config.json`) contains `apiKey`. Since send no longer goes through app-server, the key is only needed if `runtimeModel` is ever reconstructed — but CDP send doesn't need it. Keep keys in memory only; never persist/log/diagnostic-pack/UI-display. Logs record field *presence* only.
 
+## v0.3: Agent-invoked bridge via MCP (implemented 2026-07-08)
+
+`docs/v0.3-agent-invoked-bridge.md` is the design doc. The agent (ZCode/Codex/Claude) can call a `broker_forward` MCP tool to trigger a single cross-agent forward — the agent decides when to forward, no auto-loop. Implemented as a sidecar architecture:
+
+```
+ZCode agent → mcp__brokerForwardZCode__broker_forward (MCP tool)
+  → brokerMcpServer.js (stdio MCP sidecar)
+  → reads .broker-chat/runtime.json (port + token + workspaceFingerprint)
+  → HTTP POST 127.0.0.1:<port>/agent-command
+  → BrokerControlServer (in VS Code extension, validates token+fingerprint)
+  → BrokerController.forwardAgentInvokedCommand → dispatchBridge(target, content, "agent-command")
+  → Codex/Claude (OfficialUiBridge SendKeys) or ZCode (CDP)
+```
+
+Key files: `src/mcp/brokerMcpServer.ts` (MCP server), `src/mcp/BrokerControlServer.ts` (HTTP control endpoint in extension), `src/mcp/brokerRuntime.ts` (runtime.json writer). MCP config is auto-written to ZCode's `cli/config.json` via `buildMcpConfigExample`.
+
+### Hard-won testing facts (do NOT re-derive)
+
+These took multiple rounds of cross-agent testing (ZCode + Codex) to nail down. Read before touching MCP/ZCode bridge:
+
+- **ZCode agent CAN autonomously call MCP tools — but only in sessions created AFTER the MCP server was configured.** Old sessions have their toolset frozen at creation time (15 built-in tools, no `mcp__*`). A newly created session in the same ZCode instance picks up MCP tools correctly. This was confirmed by Codex creating a fresh session (`sess_95d87d24`) in the 9224 debug instance and successfully triggering `tools/call` in the MCP server log.
+- **`--remote-debugging-port=9224` is NOT the cause of MCP failure.** Same 9224 instance, new session → MCP works. The earlier "MCP tools don't enter info.tools" conclusion was because we tested in an old session whose toolset was already frozen.
+- **MCP tool annotations matter for plan mode.** Tools without `readOnlyHint: true` are blocked in ZCode plan mode. `broker_forward` has side effects (it sends a real message), so it correctly does NOT declare read-only — users must be in execute mode to call it. This is correct security behavior, not a bug.
+- **Codex's earlier "BROKER_MCP_PROBE_OK" success was a misread.** That marker appeared in a user message (forwarded text quoting Codex's description), not in a real `tools/call` log entry. The real success was later confirmed via independent MCP server logs showing `event=tool_call`.
+- **Focus guard intercepts ZCode-as-source forwards to Codex/Claude.** When you're talking to ZCode, the foreground window is ZCode (not VS Code). The `OfficialUiBridge` focus guard (`assertForegroundWorkspaceWindow`) checks `GetForegroundWindow()` and correctly rejects the send because VS Code isn't foreground. This is the v0.0.3 fail-safe working as designed. Workarounds: (a) switch to VS Code foreground before the MCP call lands, (b) forward to ZCode instead (CDP path, no focus guard), (c) accept the block as correct behavior. Do NOT remove the focus guard to "fix" this.
+- **Full chain verified 2026-07-08**: `ZCode → mcp__brokerForwardZCode__broker_forward → sidecar → runtime.json → HTTP :3891 → BrokerControlServer → token+fingerprint validation → forwardAgentInvokedCommand → Codex panel`. Returned `BROKER_FORWARD_OK`. The probe message really arrived in the Codex official panel.
+
+### runtime.json lifecycle
+
+- Written by `BrokerControlServer.start()` during extension activation, to `<workspace>/.broker-chat/runtime.json`.
+- Contains: `port` (random localhost port), `token` (auth), `workspaceFingerprint` (prevents cross-project mix-up).
+- Sidecar reads it on each `tools/call` to find the extension's HTTP endpoint.
+- If missing (extension not activated yet), sidecar returns `BROKER_FORWARD_FAILED: Broker runtime file not found. Open Broker Chat in VS Code first.`
+- Token is local-only, never logged or shown in UI.
+
 ## Automatic Forwarding Architecture
 
 Broker Chat now has two product modes:
@@ -91,7 +129,15 @@ Broker Chat now has two product modes:
 - Manual plugin forwarding from the monitored timeline.
 - Automatic keyword forwarding from official transcript user messages.
 
-There is no MCP server or localhost HTTP API in this version.
+Broker Chat v0.3 also has an agent-invoked MCP bridge:
+
+- `src/mcp/brokerMcpServer.ts` runs as a stdio MCP sidecar and exposes `broker_forward`.
+- `src/mcp/BrokerControlServer.ts` runs inside the VS Code extension host, writes `.broker-chat/runtime.json`, and accepts authenticated local `POST /agent-command` requests.
+- The sidecar is only an entrypoint. Actual delivery still goes through `BrokerController.forwardAgentInvokedCommand()` and the existing Codex / ClaudeCode / ZCode sending paths.
+- `broker_forward` is a side-effecting tool. Do not mark it read-only to bypass plan-mode restrictions.
+- ZCode may need a new conversation after MCP config changes before the model sees newly registered `mcp__*` tools.
+- A successful real full-chain probe was recorded on 2026-07-08: request `probe.mcp.real.000005` returned `BROKER_FORWARD_OK` and Codex received `[full-chain probe via real MCP tool, 请忽略, 无需回复]`.
+- ZCode -> Codex / ClaudeCode still requires the VS Code workspace window to be foreground because the official-panel SendKeys path is guarded. If the guard rejects while ZCode is foreground, treat it as a foreground requirement, not MCP failure.
 
 Key files:
 
@@ -100,6 +146,8 @@ Key files:
 - `src/automation/windowFocusGuard.ts` — pure foreground-window matching helpers used before Windows SendKeys.
 - `src/controller/bridgePrompt.ts` — shared prompt formatting for manual and automatic forwarding.
 - `src/controller/brokerController.ts` — coordinates monitor refresh, auto-forward decisions, bridge sends, and webview config updates.
+- `src/mcp/brokerMcpServer.ts` — stdio MCP sidecar for agent-invoked forwarding.
+- `src/mcp/BrokerControlServer.ts` — VS Code extension-host control endpoint used by the sidecar.
 - `media/main.js` / `media/styles.css` — status bar and settings panel.
 
 Forwarding behavior:
@@ -172,4 +220,4 @@ npm run test:powershell
 npm audit --omit=dev
 ```
 
-Before sharing a build, confirm the VSIX includes compiled `dist` output and does not depend on removed MCP assets.
+Before sharing a build, confirm the VSIX includes compiled `dist` output, including `dist/mcp/brokerMcpServer.js` and `dist/mcp/BrokerControlServer.js`.

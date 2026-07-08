@@ -29,7 +29,6 @@ try {
 }
 
 $staleDistDirs = @(
-  "dist\mcp",
   "dist\server"
 )
 

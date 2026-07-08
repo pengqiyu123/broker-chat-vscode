@@ -7,9 +7,21 @@ import {
   ZCodeReadResult,
   ZCodeReadMessage
 } from "./ZCodeRpcClient";
-import { cdpSendToZCodeInput, isCdpReachable } from "./ZCodeCdpClient";
+import {
+  cdpGetActiveZCodeConversation,
+  cdpGetActiveZCodeSessionId,
+  cdpOpenZCodeSession,
+  cdpSendToZCodeInput,
+  isCdpReachable
+} from "./ZCodeCdpClient";
 
 const POLL_INTERVAL_MS = 1500;
+
+interface ZCodeResolvedSession {
+  sessionId: string;
+  session: ZCodeListSession;
+  source: "active" | "latest";
+}
 
 // ZCode 消息正文在 parts[].text（type 为 text/reasoning 等），拼接所有 text part。
 function extractZCodeMessageText(message: ZCodeReadMessage): string {
@@ -100,25 +112,115 @@ export class ZCodeAdapter implements AgentAdapter {
     }
   }
 
-  // 会话发现：session/list 返回 { sessions: [...] } → workspace 过滤 → 取最近 updatedAt。
-  // 过滤不到 → 退化取全局最近。见 docs/send-method-test-log.md ZC-DUP-001 / 会话隔离观察。
-  public async discoverSession(workspaceCwd?: string): Promise<string | null> {
+  private async listSessions(): Promise<ZCodeListSession[]> {
     const client = await this.ensureClient();
     const result = await client.request<ZCodeListResult>("session/list", {});
-    const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+    return Array.isArray(result?.sessions) ? result.sessions : [];
+  }
+
+  private matchesWorkspace(session: ZCodeListSession, workspaceCwd?: string): boolean {
+    const targetWorkspace = normalizePath(workspaceCwd ?? this.cwd);
+    if (!targetWorkspace) {
+      return false;
+    }
+
+    const workspacePath = normalizePath(session.workspace?.workspacePath);
+    const workspaceKey = normalizePath(session.workspace?.workspaceKey);
+    return workspacePath === targetWorkspace || workspaceKey === targetWorkspace;
+  }
+
+  private findWorkspaceSessionById(
+    sessions: ZCodeListSession[],
+    sessionId: string,
+    workspaceCwd?: string
+  ): ZCodeListSession | undefined {
+    return sessions.find((session) => session.sessionId === sessionId && this.matchesWorkspace(session, workspaceCwd));
+  }
+
+  private latestWorkspaceSession(sessions: ZCodeListSession[], workspaceCwd?: string): ZCodeListSession | undefined {
+    return sessions
+      .filter((session) => this.matchesWorkspace(session, workspaceCwd))
+      .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0];
+  }
+
+  private async resolveActiveWorkspaceSession(workspaceCwd?: string): Promise<ZCodeResolvedSession> {
+    const activeConversation = await cdpGetActiveZCodeConversation();
+    const activeSessionId = activeConversation.sessionId;
+    if (!activeSessionId) {
+      throw new Error("未识别到 ZCode 当前打开的会话，请先在 ZCode 中打开目标对话。");
+    }
+
+    const targetWorkspace = normalizePath(workspaceCwd ?? this.cwd);
+    const activeWorkspace = normalizePath(activeConversation.workspacePath);
+    if (activeWorkspace && targetWorkspace && activeWorkspace !== targetWorkspace) {
+      throw new Error(
+        `ZCode 当前选中的项目不是当前 VS Code 工作区。当前：${activeConversation.workspacePath}；需要：${workspaceCwd ?? this.cwd}。请在 ZCode 左侧选择本项目下的目标对话。`
+      );
+    }
+
+    const sessions = await this.listSessions();
+    const activeSession = sessions.find((session) => session.sessionId === activeSessionId);
+    if (!activeSession) {
+      throw new Error(`ZCode 当前会话未出现在 session/list 中：${activeSessionId}`);
+    }
+
+    if (!this.matchesWorkspace(activeSession, workspaceCwd)) {
+      const currentWorkspace = activeSession.workspace?.workspacePath || activeSession.workspace?.workspaceKey || "未知工作区";
+      throw new Error(
+        `ZCode 当前打开会话不属于当前 VS Code 工作区。当前：${currentWorkspace}；需要：${workspaceCwd ?? this.cwd}。请在 ZCode 左侧选择本项目下的目标对话。`
+      );
+    }
+
+    return {
+      sessionId: activeSessionId,
+      session: activeSession,
+      source: "active"
+    };
+  }
+
+  private async resolveActiveOrLatestWorkspaceSession(workspaceCwd?: string): Promise<ZCodeResolvedSession | null> {
+    const sessions = await this.listSessions();
     if (sessions.length === 0) {
       return null;
     }
 
-    const targetWorkspace = normalizePath(workspaceCwd ?? this.cwd);
-    const matching = targetWorkspace
-      ? sessions.filter((s) => normalizePath(s.workspace?.workspacePath) === targetWorkspace)
-      : [];
-    const pool = matching.length > 0 ? matching : sessions;
+    let activeSessionId: string | undefined;
+    try {
+      activeSessionId = await cdpGetActiveZCodeSessionId();
+    } catch {
+      activeSessionId = undefined;
+    }
 
-    pool.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    const latest = pool[0];
-    return latest?.sessionId ?? null;
+    if (activeSessionId) {
+      const activeSession = this.findWorkspaceSessionById(sessions, activeSessionId, workspaceCwd);
+      if (activeSession) {
+        return {
+          sessionId: activeSessionId,
+          session: activeSession,
+          source: "active"
+        };
+      }
+    }
+
+    const latest = this.latestWorkspaceSession(sessions, workspaceCwd);
+    if (!latest?.sessionId) {
+      return null;
+    }
+    return {
+      sessionId: latest.sessionId,
+      session: latest,
+      source: "latest"
+    };
+  }
+
+  // 会话发现：优先使用 ZCode 桌面当前打开的会话；只有无法读取当前会话时才退到本工作区最近会话。
+  // 不再退化到全局最近，避免跨项目或新窗口误判。
+  public async discoverSession(workspaceCwd?: string): Promise<string | null> {
+    return (await this.resolveActiveOrLatestWorkspaceSession(workspaceCwd))?.sessionId ?? null;
+  }
+
+  public async discoverActiveSession(workspaceCwd?: string): Promise<string | null> {
+    return (await this.resolveActiveWorkspaceSession(workspaceCwd)).sessionId;
   }
 
   // 读取会话消息（供 monitor 复用同一个 client）。
@@ -249,27 +351,22 @@ export class ZCodeAdapter implements AgentAdapter {
     }
 
     // 发送通道：CDP（app-server 的 session/send 不触发 AI 回复，已废弃）。
-    // CDP 注入的是 ZCode 桌面窗口当前打开的会话。
+    // 发送前必须把 app-server 读取基线和 ZCode 桌面当前会话绑定到同一个 sessionId。
     if (!(await isCdpReachable())) {
       callbacks.onError(new Error("ZCode CDP 端口不可达，请确保 ZCode 带 --remote-debugging-port=9224 启动。"));
       return;
     }
 
-    // 记录发送前的会话消息数，作为轮询回复的基线。
     try {
-      const sessionId = await this.discoverSession(this.cwd);
-      if (sessionId) {
-        this.targetSessionId = sessionId;
-        const client = await this.ensureClient();
-        const baseline = await client.request<ZCodeReadResult>("session/resume", { sessionId });
-        this.lastReadCount = Array.isArray(baseline?.messages) ? baseline.messages.length : 0;
-      }
-    } catch {
-      // 基线获取失败不阻断发送
-    }
+      const target = await this.resolveActiveWorkspaceSession(this.cwd);
+      this.targetSessionId = target.sessionId;
+      await cdpOpenZCodeSession(target.sessionId);
 
-    try {
-      await cdpSendToZCodeInput(request.text);
+      const client = await this.ensureClient();
+      const baseline = await client.request<ZCodeReadResult>("session/resume", { sessionId: target.sessionId });
+      this.lastReadCount = Array.isArray(baseline?.messages) ? baseline.messages.length : 0;
+
+      await cdpSendToZCodeInput(request.text, 10000, { expectedSessionId: target.sessionId });
       this.startPollingReply();
     } catch (error) {
       callbacks.onError(error as Error, (error as Error).message);

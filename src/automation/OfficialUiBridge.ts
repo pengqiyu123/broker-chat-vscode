@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import * as vscode from "vscode";
-import { AgentKind } from "../types";
+import { AgentKind, BridgeTrigger } from "../types";
 import { BrokerLogger } from "./BrokerLogger";
 import { identifyFocusedElement } from "./FocusDetector";
 import { isForegroundWorkspaceWindow, WindowSnapshot } from "./windowFocusGuard";
@@ -17,7 +17,7 @@ export class OfficialUiBridge {
   public async sendToAgent(
     target: AgentKind,
     text: string,
-    context: { trigger?: "manual" | "auto-forward" } = {}
+    context: { trigger?: BridgeTrigger } = {}
   ): Promise<string> {
     if (process.platform !== "win32") {
       throw new Error("The official UI bridge is currently implemented for Windows only.");
@@ -162,7 +162,7 @@ export class OfficialUiBridge {
     this.logInfo(`foreground check ok stage=${stage} pid=${result.window?.pid} title="${result.window?.title ?? ""}"`);
   }
 
-  private async logFocusProbe(stage: string, target: AgentKind, trigger: "manual" | "auto-forward"): Promise<void> {
+  private async logFocusProbe(stage: string, target: AgentKind, trigger: BridgeTrigger): Promise<void> {
     try {
       const focus = await identifyFocusedElement();
       this.logInfo(

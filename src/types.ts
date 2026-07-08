@@ -4,6 +4,7 @@ export type ChatRole = "user" | AgentKind | "system" | "approval";
 export type ReturnMode = "compact" | "full";
 export type AutoDebateRounds = 1 | 2 | 3;
 export type AutoForwardStatus = "disabled" | "idle" | "waiting" | "sending" | "sent" | "failed";
+export type BridgeTrigger = "manual" | "auto-forward" | "agent-command";
 
 export interface AutoForwardKeywords {
   codex: string[];
@@ -185,10 +186,28 @@ export interface BridgeStatus {
   busy: boolean;
   target?: AgentKind;
   source?: AgentKind;
-  mode?: "merge-forward" | "forward-answer";
+  mode?: "merge-forward" | "forward-answer" | "agent-command";
   message?: string;
   error?: string;
   updatedAt?: number;
+}
+
+export interface AgentInvokedForwardRequest {
+  sourceAgent: AgentKind;
+  sourceSessionId?: string;
+  target: AgentKind;
+  content: string;
+  requestId: string;
+}
+
+export interface AgentInvokedForwardResult {
+  ok: boolean;
+  duplicate?: boolean;
+  source?: AgentKind;
+  target?: AgentKind;
+  requestId?: string;
+  message?: string;
+  error?: string;
 }
 
 export interface AutoForwardState {

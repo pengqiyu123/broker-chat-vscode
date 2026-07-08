@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { execFile, spawn } from "child_process";
 import {
   AgentAdapter,
+  AgentInvokedForwardRequest,
+  AgentInvokedForwardResult,
   AgentKind,
   AgentSelection,
   AutoDebateRounds,
@@ -9,6 +11,7 @@ import {
   BridgePairCheck,
   BridgePairState,
   BridgePairStatus,
+  BridgeTrigger,
   BrokerConfig,
   BrokerSnapshot,
   ChatMessage,
@@ -46,10 +49,13 @@ interface BridgeActionResult {
   error?: string;
   source?: AgentKind;
   target?: AgentKind;
-  mode?: MonitoredBridgeMode;
+  mode?: MonitoredBridgeMode | "agent-command";
   sessionId?: string;
   messageId?: string;
 }
+
+const AGENT_COMMAND_MAX_CONTENT_CHARS = 20000;
+const AGENT_COMMAND_MAX_RESULTS = 500;
 
 export class BrokerController implements vscode.Disposable {
   private readonly changeEmitter = new vscode.EventEmitter<BrokerSnapshot>();
@@ -72,6 +78,7 @@ export class BrokerController implements vscode.Disposable {
     status: "idle"
   };
   private autoForwardSendActive = false;
+  private readonly agentCommandResults = new Map<string, AgentInvokedForwardResult>();
 
   // 红蓝双方桥接对（内存态，重启回默认 claude↔codex）。
   private pair: BridgePairState = { red: "claude", blue: "codex" };
@@ -303,7 +310,7 @@ export class BrokerController implements vscode.Disposable {
     messageId: string,
     mode: MonitoredBridgeMode,
     extraText = "",
-    trigger: "manual" | "auto-forward" = "manual"
+    trigger: BridgeTrigger = "manual"
   ): Promise<BridgeActionResult> {
     if (this.bridgeState.busy) {
       const error = "已有一条桥接发送正在进行，请稍后重试。";
@@ -398,7 +405,7 @@ export class BrokerController implements vscode.Disposable {
     );
 
     try {
-      // 按目标 agent 类型分发：claude/codex 走官方面板 SendKeys，zcode 走 app-server。
+      // 按目标 agent 类型分发：claude/codex 走官方面板 SendKeys，zcode 走 CDP。
       const result = await this.dispatchBridge(target, promptResult.prompt, trigger);
       this.bridgeState = {
         busy: false,
@@ -427,27 +434,200 @@ export class BrokerController implements vscode.Disposable {
     }
   }
 
-  // 转发通道分发：Codex/Claude 走官方面板（SendKeys，已验证可靠），ZCode 走 app-server。
+  // 转发通道分发：Codex/Claude 走官方面板（SendKeys，已验证可靠），ZCode 走 CDP。
   private async dispatchBridge(
     target: AgentKind,
     prompt: string,
-    trigger: "manual" | "auto-forward"
+    trigger: BridgeTrigger
   ): Promise<string> {
     if (target === "zcode") {
       const adapter = this.adapters.zcode;
       if (!adapter) {
         throw new Error("ZCode adapter 不可用，请先在设置里选择 ZCode 并确保检测通过。");
       }
-      // sendMessage await 到 session/send 成功即 resolve；轮询回复不阻塞转发。
-      // 转发场景不回显流式内容，提供最小回调即可。
+      let sendError = "";
+      // sendMessage await 到 CDP 注入成功即 resolve；轮询回复不阻塞转发。
+      // 转发场景不回显流式内容，但必须把发送阶段错误抛回外层。
       await adapter.sendMessage({ text: prompt }, {
         onTextDelta: () => {},
         onComplete: () => {},
-        onError: () => {}
+        onError: (error, detail) => {
+          sendError = detail || error.message;
+        }
       });
-      return "已桥接发送到 ZCode 会话（app-server）。";
+      if (sendError) {
+        throw new Error(sendError);
+      }
+      return "已桥接发送到 ZCode 当前会话。";
     }
     return this.uiBridge.sendToAgent(target, prompt, { trigger });
+  }
+
+  public async forwardAgentInvokedCommand(request: AgentInvokedForwardRequest): Promise<AgentInvokedForwardResult> {
+    const validation = await this.validateAgentInvokedCommand(request);
+    if (!validation.ok) {
+      const result: AgentInvokedForwardResult = {
+        ok: false,
+        source: request.sourceAgent,
+        target: request.target,
+        requestId: request.requestId,
+        error: validation.error
+      };
+      this.setAgentCommandFailedState(request, validation.error);
+      return result;
+    }
+
+    const { sourceSessionId, commandKey, content } = validation;
+    const previous = this.agentCommandResults.get(commandKey);
+    if (previous) {
+      return {
+        ...previous,
+        duplicate: true,
+        message: previous.message ?? "重复请求已忽略。"
+      };
+    }
+
+    this.bridgeState = {
+      busy: true,
+      source: request.sourceAgent,
+      target: request.target,
+      mode: "agent-command",
+      message: `正在转发到 ${this.agentLabel(request.target)}...`,
+      updatedAt: Date.now()
+    };
+    this.emit();
+    this.logger?.info(
+      `agent command start source=${request.sourceAgent} target=${request.target} session=${sourceSessionId} requestId=${request.requestId} chars=${content.length}`
+    );
+
+    const promptResult = buildBridgeAnswerPrompt(
+      request.sourceAgent,
+      request.target,
+      content,
+      "",
+      this.getDirectionalRolePrefix(request.sourceAgent, request.target)
+    );
+    if (!promptResult.ok) {
+      const result: AgentInvokedForwardResult = {
+        ok: false,
+        source: request.sourceAgent,
+        target: request.target,
+        requestId: request.requestId,
+        error: promptResult.error
+      };
+      this.rememberAgentCommandResult(commandKey, result);
+      this.setAgentCommandFailedState(request, promptResult.error);
+      return result;
+    }
+
+    try {
+      const message = await this.dispatchBridge(request.target, promptResult.prompt, "agent-command");
+      const result: AgentInvokedForwardResult = {
+        ok: true,
+        source: request.sourceAgent,
+        target: request.target,
+        requestId: request.requestId,
+        message
+      };
+      this.rememberAgentCommandResult(commandKey, result);
+      this.bridgeState = {
+        busy: false,
+        source: request.sourceAgent,
+        target: request.target,
+        mode: "agent-command",
+        message,
+        updatedAt: Date.now()
+      };
+      this.emit();
+      this.logger?.info(`agent command success source=${request.sourceAgent} target=${request.target} requestId=${request.requestId}`);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result: AgentInvokedForwardResult = {
+        ok: false,
+        source: request.sourceAgent,
+        target: request.target,
+        requestId: request.requestId,
+        error: message
+      };
+      this.rememberAgentCommandResult(commandKey, result);
+      this.setAgentCommandFailedState(request, message);
+      this.logger?.error(`agent command failed source=${request.sourceAgent} target=${request.target} requestId=${request.requestId}: ${message}`);
+      return result;
+    }
+  }
+
+  private async validateAgentInvokedCommand(
+    request: AgentInvokedForwardRequest
+  ): Promise<
+    | { ok: true; sourceSessionId: string; commandKey: string; content: string }
+    | { ok: false; error: string }
+  > {
+    if (this.bridgeState.busy) {
+      return { ok: false, error: "已有一条桥接发送正在进行，请稍后重试。" };
+    }
+    if (request.sourceAgent === request.target) {
+      return { ok: false, error: "不能转发给同一个 Agent。" };
+    }
+    if (!this.isAgentInCurrentPair(request.sourceAgent) || !this.isAgentInCurrentPair(request.target)) {
+      return { ok: false, error: "来源和目标必须都在当前红蓝桥接对中。" };
+    }
+
+    const content = request.content.trim();
+    if (!content) {
+      return { ok: false, error: "转发正文不能为空。" };
+    }
+    if (content.length > AGENT_COMMAND_MAX_CONTENT_CHARS) {
+      return { ok: false, error: `转发正文过长，最多 ${AGENT_COMMAND_MAX_CONTENT_CHARS} 字符。` };
+    }
+    if (!/^[A-Za-z0-9._:-]{6,120}$/.test(request.requestId)) {
+      return { ok: false, error: "requestId 格式无效。" };
+    }
+
+    this.monitorSnapshot = await this.transcriptMonitor.readSnapshot(this.autoForwardEngine.getPendingSession());
+    this.emit();
+    const sourceSession = this.getMonitoredSession(request.sourceAgent);
+    if (!sourceSession) {
+      return { ok: false, error: "未找到来源 Agent 的当前监控会话。" };
+    }
+    if (request.sourceSessionId && request.sourceSessionId !== sourceSession.sessionId) {
+      return { ok: false, error: "来源会话已变化，请重新发起转发。" };
+    }
+
+    const commandKey = `${request.sourceAgent}:${sourceSession.sessionId}:${request.requestId}`;
+    return {
+      ok: true,
+      sourceSessionId: sourceSession.sessionId,
+      commandKey,
+      content
+    };
+  }
+
+  private rememberAgentCommandResult(commandKey: string, result: AgentInvokedForwardResult): void {
+    this.agentCommandResults.set(commandKey, result);
+    if (this.agentCommandResults.size <= AGENT_COMMAND_MAX_RESULTS) {
+      return;
+    }
+    const firstKey = this.agentCommandResults.keys().next().value as string | undefined;
+    if (firstKey) {
+      this.agentCommandResults.delete(firstKey);
+    }
+  }
+
+  private setAgentCommandFailedState(request: AgentInvokedForwardRequest, error: string): void {
+    this.bridgeState = {
+      busy: false,
+      source: request.sourceAgent,
+      target: request.target,
+      mode: "agent-command",
+      error,
+      updatedAt: Date.now()
+    };
+    this.emit();
+  }
+
+  private isAgentInCurrentPair(agent: AgentKind): boolean {
+    return this.pair.red === agent || this.pair.blue === agent;
   }
 
   public setCurrentTarget(target: AgentKind): void {
@@ -1280,14 +1460,14 @@ export class BrokerController implements vscode.Disposable {
       if (!adapter) {
         return undefined;
       }
-      const sessionId = await adapter.discoverSession(workspaceCwd);
+      const sessionId = await adapter.discoverActiveSession(workspaceCwd);
       if (!sessionId) {
         return undefined;
       }
       const session = await adapter.readSession(sessionId);
       return session ?? undefined;
-    } catch {
-      return undefined;
+    } catch (error) {
+      throw error;
     }
   }
 }
