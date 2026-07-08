@@ -382,25 +382,27 @@ async function main() {
 
   {
     const windows = [
-      { pid: 1, processName: "Code", title: "main.ts - broker-chat-vscode - Visual Studio Code" },
-      { pid: 2, processName: "Code", title: "notes - other-workspace - Visual Studio Code" }
+      { pid: 1, processName: "Code", title: "main.ts - broker-chat-vscode - Visual Studio Code", hwnd: 1001 },
+      { pid: 2, processName: "Code", title: "notes - other-workspace - Visual Studio Code", hwnd: 1002 }
     ];
     const selected = selectUniqueWorkspaceWindow(windows, workspaceCwd);
     assert.equal(selected.ok, true);
     assert.equal(selected.window.pid, 1);
+    assert.equal(selected.window.hwnd, 1001);
     assert.equal(isForegroundWorkspaceWindow(windows, 1, workspaceCwd).ok, true);
     assert.equal(isForegroundWorkspaceWindow(windows, 2, workspaceCwd).ok, false);
   }
 
   {
     const windows = [
-      { pid: 1, processName: "Code", title: "main.ts - broker-chat-vscode - Visual Studio Code" },
-      { pid: 2, processName: "Code", title: "notes - other-workspace - Visual Studio Code" }
+      { pid: 1, processName: "Code", title: "main.ts - broker-chat-vscode - Visual Studio Code", hwnd: 1001 },
+      { pid: 2, processName: "Code", title: "notes - other-workspace - Visual Studio Code", hwnd: 1002 }
     ];
     const foreground = {
       pid: 42,
       processName: "Code",
-      title: "broker-chat-vscode - Visual Studio Code"
+      title: "broker-chat-vscode - Visual Studio Code",
+      hwnd: 1042
     };
     assert.equal(isForegroundWorkspaceWindow(windows, foreground, workspaceCwd).ok, true);
   }

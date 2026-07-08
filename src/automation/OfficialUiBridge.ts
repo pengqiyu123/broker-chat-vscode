@@ -183,11 +183,12 @@ export class OfficialUiBridge {
     }
 
     this.logInfo(
-      `foreground activation attempt stage=${stage} pid=${selected.window.pid} title="${selected.window.title}"`
+      `foreground activation attempt stage=${stage} ${this.formatWindow(selected.window)}`
     );
 
     try {
-      await this.activateWindowByPid(selected.window.pid);
+      const activationResult = await this.activateWorkspaceWindow(selected.window);
+      this.logInfo(`foreground activation command result stage=${stage} ${activationResult}`);
     } catch (error) {
       this.logError(
         `foreground activation command failed stage=${stage}: ${error instanceof Error ? error.message : String(error)}`
@@ -211,7 +212,7 @@ export class OfficialUiBridge {
     }
 
     this.logInfo(
-      `foreground activation ok stage=${stage} pid=${after.window?.pid} title="${after.window?.title ?? ""}"`
+      `foreground activation ok stage=${stage} ${this.formatWindow(after.window)}`
     );
     return true;
   }
@@ -241,7 +242,7 @@ export class OfficialUiBridge {
     const script = [
       "Get-Process |",
       "Where-Object { $_.MainWindowTitle } |",
-      "Select-Object Id,ProcessName,MainWindowTitle |",
+      "Select-Object Id,ProcessName,MainWindowTitle,@{Name='Hwnd';Expression={[int64]$_.MainWindowHandle}} |",
       "ConvertTo-Json -Compress"
     ].join(" ");
     const { stdout } = await execFileAsync(
@@ -258,25 +259,113 @@ export class OfficialUiBridge {
     const rows = Array.isArray(parsed) ? parsed : [parsed];
     return rows
       .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
-      .map((entry) => ({
-        pid: Number(entry.Id),
-        processName: String(entry.ProcessName ?? ""),
-        title: String(entry.MainWindowTitle ?? "")
-      }))
+      .map((entry) => {
+        const hwnd = Number(entry.Hwnd);
+        return {
+          pid: Number(entry.Id),
+          processName: String(entry.ProcessName ?? ""),
+          title: String(entry.MainWindowTitle ?? ""),
+          hwnd: Number.isFinite(hwnd) && hwnd > 0 ? hwnd : undefined
+        };
+      })
       .filter((entry) => Number.isFinite(entry.pid) && entry.title.trim());
   }
 
-  private async activateWindowByPid(pid: number): Promise<void> {
+  private async activateWorkspaceWindow(window: WindowSnapshot): Promise<string> {
+    if (typeof window.hwnd === "number" && Number.isFinite(window.hwnd) && window.hwnd > 0) {
+      return this.activateWindowByHwnd(window.hwnd);
+    }
+
+    return this.activateWindowByPid(window.pid);
+  }
+
+  private async activateWindowByPid(pid: number): Promise<string> {
     const script = [
       "$wshell = New-Object -ComObject WScript.Shell",
-      `[void]$wshell.AppActivate(${pid})`
+      `$ok = $wshell.AppActivate(${pid})`,
+      `[pscustomobject]@{ method = 'AppActivate'; requestedPid = ${pid}; ok = [bool]$ok } | ConvertTo-Json -Compress`
     ].join("\n");
 
-    await execFileAsync(
+    const { stdout } = await execFileAsync(
       "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
       { windowsHide: true }
     );
+    return stdout.trim();
+  }
+
+  private async activateWindowByHwnd(hwnd: number): Promise<string> {
+    const safeHwnd = Math.trunc(hwnd);
+    const script = [
+      "$signature = @'",
+      "using System;",
+      "using System.Runtime.InteropServices;",
+      "public static class Win32BrokerWindowActivation {",
+      "  [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);",
+      "  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr hWnd);",
+      "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+      "  [DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr hWnd);",
+      "  [DllImport(\"user32.dll\")] public static extern IntPtr SetActiveWindow(IntPtr hWnd);",
+      "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
+      "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);",
+      "  [DllImport(\"user32.dll\")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);",
+      "  [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);",
+      "  [DllImport(\"kernel32.dll\")] public static extern uint GetCurrentThreadId();",
+      "}",
+      "'@",
+      "Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue",
+      `$targetHwnd = [IntPtr]::new([int64]${safeHwnd})`,
+      "$foregroundBefore = [Win32BrokerWindowActivation]::GetForegroundWindow()",
+      "$targetPid = [uint32]0",
+      "$foregroundPid = [uint32]0",
+      "$targetThread = [Win32BrokerWindowActivation]::GetWindowThreadProcessId($targetHwnd, [ref]$targetPid)",
+      "$foregroundThread = [Win32BrokerWindowActivation]::GetWindowThreadProcessId($foregroundBefore, [ref]$foregroundPid)",
+      "$currentThread = [Win32BrokerWindowActivation]::GetCurrentThreadId()",
+      "$attachedForeground = $false",
+      "$attachedTarget = $false",
+      "try {",
+      "  if ([Win32BrokerWindowActivation]::IsIconic($targetHwnd)) {",
+      "    [void][Win32BrokerWindowActivation]::ShowWindowAsync($targetHwnd, 9)",
+      "  } else {",
+      "    [void][Win32BrokerWindowActivation]::ShowWindowAsync($targetHwnd, 5)",
+      "  }",
+      "  if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {",
+      "    $attachedForeground = [Win32BrokerWindowActivation]::AttachThreadInput($currentThread, $foregroundThread, $true)",
+      "  }",
+      "  if ($targetThread -ne 0 -and $targetThread -ne $currentThread) {",
+      "    $attachedTarget = [Win32BrokerWindowActivation]::AttachThreadInput($currentThread, $targetThread, $true)",
+      "  }",
+      "  $bringWindowToTop = [Win32BrokerWindowActivation]::BringWindowToTop($targetHwnd)",
+      "  $activeWindow = [Win32BrokerWindowActivation]::SetActiveWindow($targetHwnd)",
+      "  $setForeground = [Win32BrokerWindowActivation]::SetForegroundWindow($targetHwnd)",
+      "  [Win32BrokerWindowActivation]::SwitchToThisWindow($targetHwnd, $true)",
+      "} finally {",
+      "  if ($attachedTarget) { [void][Win32BrokerWindowActivation]::AttachThreadInput($currentThread, $targetThread, $false) }",
+      "  if ($attachedForeground) { [void][Win32BrokerWindowActivation]::AttachThreadInput($currentThread, $foregroundThread, $false) }",
+      "}",
+      "Start-Sleep -Milliseconds 120",
+      "$foregroundAfter = [Win32BrokerWindowActivation]::GetForegroundWindow()",
+      "[pscustomobject]@{",
+      "  method = 'SetForegroundWindow';",
+      `  requestedHwnd = ${safeHwnd};`,
+      "  targetPid = [int64]$targetPid;",
+      "  foregroundBefore = $foregroundBefore.ToInt64();",
+      "  foregroundAfter = $foregroundAfter.ToInt64();",
+      "  foregroundMatches = ($foregroundAfter -eq $targetHwnd);",
+      "  attachedForeground = [bool]$attachedForeground;",
+      "  attachedTarget = [bool]$attachedTarget;",
+      "  bringWindowToTop = [bool]$bringWindowToTop;",
+      "  setForeground = [bool]$setForeground;",
+      "  activeWindow = $activeWindow.ToInt64()",
+      "} | ConvertTo-Json -Compress"
+    ].join("\n");
+
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true }
+    );
+    return stdout.trim();
   }
 
   private async getForegroundWindow(): Promise<WindowSnapshot | undefined> {
@@ -301,6 +390,7 @@ export class OfficialUiBridge {
       "$processName = if ($process) { $process.ProcessName } else { '' }",
       "[pscustomobject]@{",
       "  Id = $foregroundProcessId;",
+      "  Hwnd = $hwnd.ToInt64();",
       "  ProcessName = $processName;",
       "  MainWindowTitle = $titleBuilder.ToString()",
       "} | ConvertTo-Json -Compress"
@@ -325,7 +415,8 @@ export class OfficialUiBridge {
     return {
       pid,
       processName: String(parsed.ProcessName ?? ""),
-      title: String(parsed.MainWindowTitle ?? "")
+      title: String(parsed.MainWindowTitle ?? ""),
+      hwnd: Number.isFinite(Number(parsed.Hwnd)) && Number(parsed.Hwnd) > 0 ? Number(parsed.Hwnd) : undefined
     };
   }
 
@@ -346,6 +437,7 @@ export class OfficialUiBridge {
       return "unknown";
     }
 
-    return `${window.processName || "unknown"}#${window.pid} "${window.title}"`;
+    const hwnd = typeof window.hwnd === "number" ? ` hwnd=${window.hwnd}` : "";
+    return `${window.processName || "unknown"}#${window.pid}${hwnd} "${window.title}"`;
   }
 }

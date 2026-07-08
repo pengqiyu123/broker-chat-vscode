@@ -4,6 +4,7 @@ export interface WindowSnapshot {
   pid: number;
   processName: string;
   title: string;
+  hwnd?: number;
 }
 
 export interface WindowSelectionResult {
@@ -110,6 +111,7 @@ function isWindowSnapshot(value: unknown): value is WindowSnapshot {
     typeof record.pid === "number" &&
     typeof record.processName === "string" &&
     typeof record.title === "string" &&
-    Number.isFinite(record.pid)
+    Number.isFinite(record.pid) &&
+    (record.hwnd === undefined || (typeof record.hwnd === "number" && Number.isFinite(record.hwnd)))
   );
 }

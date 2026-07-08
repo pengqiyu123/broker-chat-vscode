@@ -1,4 +1,5 @@
 .vscode/**
+.broker-chat/**
 src/**
 scripts/**
 node_modules/**
